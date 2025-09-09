@@ -1,0 +1,216 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+
+    <title>Keyword Highlighter</title>
+
+    <style>
+/* -------------------------------------------------------------------------- */
+
+#editControl {
+    min-height: 20em;
+    border:     0.1em solid black;
+    outline:    none;
+    margin:     0.6em 0.1em;
+    padding:    0.5em 0.75em;
+}
+
+.keyword {
+    color: blue;
+}
+
+.comment {
+    color: green;
+}
+
+/* -------------------------------------------------------------------------- */
+    </style>
+    <script>
+// -----------------------------------------------------------------------------
+
+const keywordList = [
+    "this",
+    "that"
+];
+
+// -----------------------------------------------------------------------------
+
+class InputToken {
+
+    constructor(text, index, style = "") {
+        this.text  = text;
+        this.index = index;
+        this.style = style;
+    }
+
+    getEnd() {
+        return this.index + this.text.length;
+    }
+}
+
+function tokenizeInput(input) {
+
+    const tokens    = [];
+    const rawTokens = input.split(/\W+/).filter((s) => s.length > 0);
+
+    for (let index=0, token=0; token < rawTokens.length; token++) {
+
+        index                 = input.indexOf(rawTokens[token], index);
+        tokens[tokens.length] = new InputToken(rawTokens[token], index);
+
+        index += rawTokens[token].length;
+    }
+
+    return tokens;
+}
+
+function styleRanges(input, startText, endText, tokens, style) {
+
+    for (let endIndex,
+             startIndex = input.indexOf(startText);
+             startIndex > -1;
+             startIndex = input.indexOf(startText, endIndex)) {
+
+        endIndex = input.indexOf(endText, startIndex);
+        if (endIndex > -1) {
+            endIndex += endText.length;
+        } else {
+            endIndex = input.length;
+        }
+
+        const text  = input.substring(startIndex, endIndex);
+        const token = new InputToken(text, startIndex, style);
+
+        let tokenStart = -1;
+        let tokenCount =  0;
+        for (let index =  0; index < tokens.length; index++) {
+
+            if (tokens[index].index < startIndex) {
+                continue;
+            }
+            if (tokenStart == -1) {
+                tokenStart = index;
+            }
+            if (tokens[index].index >= endIndex) {
+                break;
+            }
+            tokenCount++;
+        }
+
+        tokens.splice(tokenStart, tokenCount, token);
+    }
+}
+
+function styleTokens(wordList, tokens, style) {
+
+    for (let index = 0; index < tokens.length; index++) {
+        for (let word = 0; word < wordList.length; word++) {
+
+            if (tokens[index].text == wordList[word]) {
+                tokens[index].style = style;
+            }
+        }
+    }
+}
+
+function buildStyledHTML(input, tokens) {
+
+    let html = input.substring(0, tokens[0].index);
+    for (let index = 0; index < tokens.length; index++) {
+
+        html += "<span class='" + tokens[index].style + "'>";
+        html += tokens[index].text;
+        html += "</span>";
+
+        if (index + 1 >= tokens.length) {
+            html += input.substring(tokens[index].getEnd());
+        } else {
+            html += input.substring(tokens[index].getEnd(),
+                                    tokens[index + 1].index);
+        }
+    }
+
+    return html;
+}
+
+// -----------------------------------------------------------------------------
+
+function getUnstyledHTML(element) {
+
+    let html = element.innerHTML;
+        html = html.replace(/<span[^>]*>/g, "");
+        html = html.replace(/<font[^>]*>/g, "");
+        html = html.replace(/<\/span>/g, "");
+        html = html.replace(/<\/font>/g, "");
+
+    return html;
+}
+
+function preserveCaret(element, html) {
+
+    const selection = window.getSelection();
+    if (selection == null || selection.rangeCount <= 0) {
+        element.innerHTML = html;
+        return;
+    }
+
+    const range = selection.getRangeAt(0).cloneRange();
+    range.setStart(element, 0);
+    let caret = range.toString().length;
+
+    element.innerHTML = html;
+
+    const tree = document.createTreeWalker(element, NodeFilter.SHOW_TEXT);
+    while (tree.nextNode() != null && caret > tree.currentNode.length) {
+        caret -= tree.currentNode.length;
+    }
+    caret = Math.min(caret, tree.currentNode.length);
+
+    range.setStart(tree.currentNode, caret);
+    range.collapse(true);
+    selection.removeAllRanges();
+    selection.addRange(range);
+}
+
+function styleEditControl() {
+
+    const editControl = document.getElementById("editControl");
+    const html        = getUnstyledHTML(editControl);
+    const tokens      = tokenizeInput(html);
+
+    styleRanges(html, "/*", "*/", tokens, "comment");
+
+    styleTokens(keywordList, tokens, "keyword");
+
+    const validTokens = tokens.filter((t) => t.style != "");
+    if (validTokens.length < 1) {
+        preserveCaret(editControl, html);
+    } else {
+        preserveCaret(editControl, buildStyledHTML(html, validTokens));
+    }
+}
+
+let stylingTimer;
+function debounceStyling() {
+
+    document
+        .getElementById("editControl")
+        .addEventListener("input", function () {
+            clearTimeout(stylingTimer);
+            stylingTimer = setTimeout(styleEditControl, 2000);
+        });
+}
+
+// -----------------------------------------------------------------------------
+    </script>
+
+</head>
+<body onload="debounceStyling()">
+
+    <div id="editControl" contenteditable="true" spellcheck="false"></div>
+
+</body>
+</html>
