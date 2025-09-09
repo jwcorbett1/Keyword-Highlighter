@@ -10,12 +10,39 @@
     <style>
 /* -------------------------------------------------------------------------- */
 
-#editControl {
-    min-height: 20em;
-    border:     0.1em solid black;
-    outline:    none;
-    margin:     0.6em 0.1em;
-    padding:    0.5em 0.75em;
+body {
+    font-family: "Courier New", Courier, monospace;
+}
+
+#viewPort {
+    display:        flex;
+    flex-direction: column;
+    width:          85vw;
+    height:         85vh;
+    margin:         1.5em auto 0;
+    padding:        0;
+}
+
+#editBox {
+    flex-grow:   1;
+    white-space: preserve nowrap;
+    overflow:    auto;
+    border:      0.1em solid black;
+    outline:     none;
+    margin:      0;
+    padding:     0.6em 0.8em;
+}
+
+#toolBar {
+    flex-grow: 0;
+    margin:    0;
+    padding:   0 0 0.7em;
+}
+
+#filePicker {
+    position: absolute;
+    z-index:  -1;
+    opacity:  0;
 }
 
 .keyword {
@@ -149,7 +176,7 @@ function getUnstyledHTML(element) {
     return html;
 }
 
-function preserveCaret(element, html) {
+function saveCaret(element, html) {
 
     const selection = window.getSelection();
     if (selection == null || selection.rangeCount <= 0) {
@@ -175,11 +202,11 @@ function preserveCaret(element, html) {
     selection.addRange(range);
 }
 
-function styleEditControl() {
+function styleEditBox() {
 
-    const editControl = document.getElementById("editControl");
-    const html        = getUnstyledHTML(editControl);
-    const tokens      = tokenizeInput(html);
+    const editBox = document.getElementById("editBox");
+    const html    = getUnstyledHTML(editBox);
+    const tokens  = tokenizeInput(html);
 
     styleRanges(html, "/*", "*/", tokens, "comment");
 
@@ -187,20 +214,73 @@ function styleEditControl() {
 
     const validTokens = tokens.filter((t) => t.style != "");
     if (validTokens.length < 1) {
-        preserveCaret(editControl, html);
+        saveCaret(editBox, html);
     } else {
-        preserveCaret(editControl, buildStyledHTML(html, validTokens));
+        saveCaret(editBox, buildStyledHTML(html, validTokens));
     }
 }
 
+// -----------------------------------------------------------------------------
+
+function pickFile() {
+    document.getElementById("filePicker").click();
+}
+
+let fileName = "temp.txt";
+function uploadFile() {
+
+    if (this.files.length > 0) {
+
+        fileName = this.files[0].name;
+
+        const reader = new FileReader();
+        reader.addEventListener("load", function () {
+
+            document.getElementById("editBox").innerHTML =
+                reader.result.replace(/(\r*\n|\r)/g, "<div><br></div>");
+
+            styleEditBox();
+        });
+
+        reader.readAsText(this.files[0]);
+    }
+}
+
+function downloadFile() {
+
+    let content = getUnstyledHTML(document.getElementById("editBox"));
+        content = content.replace(/<div[^>]*>/g, "\n");
+        content = content.replace(/<\/div>/g,    "");
+        content = content.replace(/<br>/g,       "");
+
+    const url = URL.createObjectURL(new Blob(
+        [content],
+        { type: "text/plain" }
+    ));
+
+    const link          = document.createElement("a");
+          link.href     = url;
+          link.download = fileName;
+
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+
+    URL.revokeObjectURL(url);
+}
+
 let stylingTimer;
-function debounceStyling() {
+function onPageLoad() {
 
     document
-        .getElementById("editControl")
+        .getElementById("filePicker")
+        .addEventListener("change", uploadFile);
+
+    document
+        .getElementById("editBox")
         .addEventListener("input", function () {
             clearTimeout(stylingTimer);
-            stylingTimer = setTimeout(styleEditControl, 2000);
+            stylingTimer = setTimeout(styleEditBox, 2000);
         });
 }
 
@@ -208,9 +288,26 @@ function debounceStyling() {
     </script>
 
 </head>
-<body onload="debounceStyling()">
+<body onload="onPageLoad()">
 
-    <div id="editControl" contenteditable="true" spellcheck="false"></div>
+    <div id="viewPort">
+        <div id="toolBar">
+
+            <input type="file"
+                   id="filePicker"
+                   accept="text/plain">
+
+            <input type="button"
+                   value="Upload File"
+                   onclick="pickFile()">
+
+            <input type="button"
+                   value="Save to Downloads"
+                   onclick="downloadFile()">
+
+        </div>
+        <div id="editBox" contenteditable="true" spellcheck="false"></div>
+    </div>
 
 </body>
 </html>
