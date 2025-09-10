@@ -45,8 +45,16 @@ body, input {
     opacity:  0;
 }
 
+#fileName {
+    width: 40em;
+}
+
 .keyword {
     color: blue;
+}
+
+.literal {
+    color: red;
 }
 
 .comment {
@@ -68,6 +76,10 @@ class InputToken {
 
     getEnd() {
         return this.index + this.text.length;
+    }
+
+    contains(text) {
+        return this.text.indexOf(text) > -1;
     }
 }
 
@@ -94,7 +106,7 @@ function styleRanges(input, startText, endText, tokens, style) {
              startIndex > -1;
              startIndex = input.indexOf(startText, endIndex)) {
 
-        endIndex = input.indexOf(endText, startIndex);
+        endIndex = input.indexOf(endText, startIndex + startText.length);
         if (endIndex > -1) {
             endIndex += endText.length;
         } else {
@@ -104,23 +116,31 @@ function styleRanges(input, startText, endText, tokens, style) {
         const text  = input.substring(startIndex, endIndex);
         const token = new InputToken(text, startIndex, style);
 
-        let tokenStart = -1;
-        let tokenCount =  0;
-        for (let index =  0; index < tokens.length; index++) {
+        let tokenStart = tokens.length > 0  ?  -1 : 0;
+        let tokenCount = 0;
+        for (let index = 0; index < tokens.length; index++) {
 
             if (tokens[index].index < startIndex) {
                 continue;
             }
+
             if (tokenStart < 0) {
+                if (index > 0 && tokens[index - 1].contains(startText)) {
+                    break;
+                }
                 tokenStart = index;
             }
+
             if (tokens[index].index >= endIndex) {
                 break;
             }
+
             tokenCount++;
         }
 
-        tokens.splice(tokenStart, tokenCount, token);
+        if (tokenStart > -1) {
+            tokens.splice(tokenStart, tokenCount, token);
+        }
     }
 }
 
@@ -164,8 +184,134 @@ function buildStyledHTML(input, tokens) {
 // -----------------------------------------------------------------------------
 
 const keywordList = [
-    "this",
-    "that"
+    "_Alignas",
+    "_Alignof",
+    "_Atomic",
+    "_BitInt",
+    "_Bool",
+    "_Complex",
+    "_Decimal128",
+    "_Decimal32",
+    "_Decimal64",
+    "_Generic",
+    "_Imaginary",
+    "_Noreturn",
+    "_Static_assert",
+    "_Thread_local",
+    "alignas",
+    "alignof",
+    "asm",
+    "atomic_bool",
+    "atomic_char",
+    "atomic_char16_t",
+    "atomic_char32_t",
+    "atomic_char8_t",
+    "atomic_int",
+    "atomic_int_fast16_t",
+    "atomic_int_fast32_t",
+    "atomic_int_fast64_t",
+    "atomic_int_fast8_t",
+    "atomic_int_least16_t",
+    "atomic_int_least32_t",
+    "atomic_int_least64_t",
+    "atomic_int_least8_t",
+    "atomic_intmax_t",
+    "atomic_intptr_t",
+    "atomic_llong",
+    "atomic_long",
+    "atomic_ptrdiff_t",
+    "atomic_schar",
+    "atomic_short",
+    "atomic_size_t",
+    "atomic_uchar",
+    "atomic_uint",
+    "atomic_uint_fast16_t",
+    "atomic_uint_fast32_t",
+    "atomic_uint_fast64_t",
+    "atomic_uint_fast8_t",
+    "atomic_uint_least16_t",
+    "atomic_uint_least32_t",
+    "atomic_uint_least64_t",
+    "atomic_uint_least8_t",
+    "atomic_uintmax_t",
+    "atomic_uintptr_t",
+    "atomic_ullong",
+    "atomic_ulong",
+    "atomic_ushort",
+    "atomic_wchar_t",
+    "auto",
+    "bool",
+    "break",
+    "case",
+    "char",
+    "char16_t",
+    "char32_t",
+    "char8_t",
+    "complex",
+    "const",
+    "constexpr",
+    "continue",
+    "default",
+    "do",
+    "double",
+    "else",
+    "enum",
+    "extern",
+    "false",
+    "float",
+    "for",
+    "fortran",
+    "goto",
+    "if",
+    "imaginary",
+    "inline",
+    "int",
+    "int_fast16_t",
+    "int_fast32_t",
+    "int_fast64_t",
+    "int_fast8_t",
+    "int_least16_t",
+    "int_least32_t",
+    "int_least64_t",
+    "int_least8_t",
+    "intmax_t",
+    "intptr_t",
+    "long",
+    "noreturn",
+    "nullptr",
+    "ptrdiff_t",
+    "register",
+    "restrict",
+    "return",
+    "short",
+    "signed",
+    "size_t",
+    "sizeof",
+    "static",
+    "static_assert",
+    "struct",
+    "switch",
+    "thread_local",
+    "true",
+    "typedef",
+    "typeof",
+    "typeof_unqual",
+    "uint_fast16_t",
+    "uint_fast32_t",
+    "uint_fast64_t",
+    "uint_fast8_t",
+    "uint_least16_t",
+    "uint_least32_t",
+    "uint_least64_t",
+    "uint_least8_t",
+    "uintmax_t",
+    "uintptr_t",
+    "union",
+    "unsigned",
+    "void",
+    "volatile",
+    "wchar_t",
+    "while"
 ];
 
 function getUnstyledHTML(element) {
@@ -211,6 +357,7 @@ function styleEditBox() {
     const html    = getUnstyledHTML(editBox);
     const tokens  = tokenizeInput(html);
 
+    styleRanges(html, "\"", "\"", tokens, "literal");
     styleRanges(html, "/*", "*/", tokens, "comment");
     styleTokens(keywordList, tokens, "keyword");
 
@@ -226,13 +373,13 @@ function debounceStyling() {
 
 // -----------------------------------------------------------------------------
 
-let fileName = "temp.txt";
-
 function pickFile() {
     document.getElementById("filePicker").click();
 }
 
 function loadFile(content) {
+
+    content = content.replace(/</g, "&lt;").replace(/>/g, "&gt;");
 
     const editBox = document.getElementById("editBox");
     const lines   = content.split(/(?:\r*\n|\r)/);
@@ -260,7 +407,7 @@ function readFile() {
 
     if (this.files.length > 0) {
 
-        fileName = this.files[0].name;
+        document.getElementById("fileName").value = this.files[0].name;
 
         const reader = new FileReader();
         reader.addEventListener("load", function () {
@@ -268,6 +415,7 @@ function readFile() {
         });
 
         reader.readAsText(this.files[0]);
+        this.value = "";
     }
 }
 
@@ -289,7 +437,7 @@ function downloadFile() {
 
     const link          = document.createElement("a");
           link.href     = url;
-          link.download = fileName;
+          link.download = document.getElementById("fileName").value;
 
     document.body.appendChild(link);
     link.click();
@@ -331,6 +479,9 @@ function onPageLoad() {
             <input type="button"
                    value="Save to Downloads"
                    onclick="downloadFile()">
+
+            <label for="fileName">Current File:</label>
+            <input type="text" id="fileName" value="temp.txt">
 
         </div>
         <div id="editBox" contenteditable="true" spellcheck="false"></div>
