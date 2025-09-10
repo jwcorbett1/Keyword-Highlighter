@@ -10,7 +10,7 @@
     <style>
 /* -------------------------------------------------------------------------- */
 
-body {
+body, input {
     font-family: "Courier New", Courier, monospace;
 }
 
@@ -58,13 +58,6 @@ body {
     <script>
 // -----------------------------------------------------------------------------
 
-const keywordList = [
-    "this",
-    "that"
-];
-
-// -----------------------------------------------------------------------------
-
 class InputToken {
 
     constructor(text, index, style = "") {
@@ -105,7 +98,7 @@ function styleRanges(input, startText, endText, tokens, style) {
         if (endIndex > -1) {
             endIndex += endText.length;
         } else {
-            endIndex = input.length;
+            endIndex  = input.length;
         }
 
         const text  = input.substring(startIndex, endIndex);
@@ -118,7 +111,7 @@ function styleRanges(input, startText, endText, tokens, style) {
             if (tokens[index].index < startIndex) {
                 continue;
             }
-            if (tokenStart == -1) {
+            if (tokenStart < 0) {
                 tokenStart = index;
             }
             if (tokens[index].index >= endIndex) {
@@ -145,18 +138,23 @@ function styleTokens(wordList, tokens, style) {
 
 function buildStyledHTML(input, tokens) {
 
-    let html = input.substring(0, tokens[0].index);
-    for (let index = 0; index < tokens.length; index++) {
+    const validTokens = tokens.filter((t) => t.style != "");
+    if (validTokens.length < 1) {
+        return input;
+    }
 
-        html += "<span class='" + tokens[index].style + "'>";
-        html += tokens[index].text;
+    let html = input.substring(0, validTokens[0].index);
+    for (let index = 0; index < validTokens.length; index++) {
+
+        html += "<span class='" + validTokens[index].style + "'>";
+        html += validTokens[index].text;
         html += "</span>";
 
-        if (index + 1 >= tokens.length) {
-            html += input.substring(tokens[index].getEnd());
+        if (index + 1 >= validTokens.length) {
+            html += input.substring(validTokens[index].getEnd());
         } else {
-            html += input.substring(tokens[index].getEnd(),
-                                    tokens[index + 1].index);
+            html += input.substring(validTokens[index].getEnd(),
+                                    validTokens[index + 1].index);
         }
     }
 
@@ -164,6 +162,11 @@ function buildStyledHTML(input, tokens) {
 }
 
 // -----------------------------------------------------------------------------
+
+const keywordList = [
+    "this",
+    "that"
+];
 
 function getUnstyledHTML(element) {
 
@@ -179,7 +182,7 @@ function getUnstyledHTML(element) {
 function saveCaret(element, html) {
 
     const selection = window.getSelection();
-    if (selection == null || selection.rangeCount <= 0) {
+    if (selection && selection.rangeCount < 1) {
         element.innerHTML = html;
         return;
     }
@@ -209,25 +212,51 @@ function styleEditBox() {
     const tokens  = tokenizeInput(html);
 
     styleRanges(html, "/*", "*/", tokens, "comment");
-
     styleTokens(keywordList, tokens, "keyword");
 
-    const validTokens = tokens.filter((t) => t.style != "");
-    if (validTokens.length < 1) {
-        saveCaret(editBox, html);
-    } else {
-        saveCaret(editBox, buildStyledHTML(html, validTokens));
-    }
+    saveCaret(editBox, buildStyledHTML(html, tokens));
+}
+
+let stylingTimer;
+function debounceStyling() {
+
+    clearTimeout(stylingTimer);
+    stylingTimer = setTimeout(styleEditBox, 2000);
 }
 
 // -----------------------------------------------------------------------------
+
+let fileName = "temp.txt";
 
 function pickFile() {
     document.getElementById("filePicker").click();
 }
 
-let fileName = "temp.txt";
-function uploadFile() {
+function loadFile(content) {
+
+    const editBox = document.getElementById("editBox");
+    const lines   = content.split(/(?:\r*\n|\r)/);
+
+    if (lines.length < 2) {
+        editBox.innerHTML = lines[0];
+    } else {
+
+        let html = "";
+        for (let index = 0; index < lines.length; index++) {
+
+            if (lines[index].length < 1) {
+                lines[index] = "<br>";
+            }
+            html += "<div>" + lines[index] + "</div>";
+        }
+
+        editBox.innerHTML = html;
+    }
+
+    styleEditBox();
+}
+
+function readFile() {
 
     if (this.files.length > 0) {
 
@@ -235,11 +264,7 @@ function uploadFile() {
 
         const reader = new FileReader();
         reader.addEventListener("load", function () {
-
-            document.getElementById("editBox").innerHTML =
-                reader.result.replace(/(\r*\n|\r)/g, "<div><br></div>");
-
-            styleEditBox();
+            loadFile(reader.result);
         });
 
         reader.readAsText(this.files[0]);
@@ -252,6 +277,10 @@ function downloadFile() {
         content = content.replace(/<div[^>]*>/g, "\n");
         content = content.replace(/<\/div>/g,    "");
         content = content.replace(/<br>/g,       "");
+
+    if (content[0] == "\n") {
+        content = content.substring(1);
+    }
 
     const url = URL.createObjectURL(new Blob(
         [content],
@@ -269,19 +298,17 @@ function downloadFile() {
     URL.revokeObjectURL(url);
 }
 
-let stylingTimer;
+// -----------------------------------------------------------------------------
+
 function onPageLoad() {
 
     document
         .getElementById("filePicker")
-        .addEventListener("change", uploadFile);
+        .addEventListener("change", readFile);
 
     document
         .getElementById("editBox")
-        .addEventListener("input", function () {
-            clearTimeout(stylingTimer);
-            stylingTimer = setTimeout(styleEditBox, 2000);
-        });
+        .addEventListener("input", debounceStyling);
 }
 
 // -----------------------------------------------------------------------------
@@ -298,7 +325,7 @@ function onPageLoad() {
                    accept="text/plain">
 
             <input type="button"
-                   value="Upload File"
+                   value="Open File"
                    onclick="pickFile()">
 
             <input type="button"
