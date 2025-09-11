@@ -14,7 +14,7 @@ body, input {
     font-family: "Courier New", Courier, monospace;
 }
 
-#viewPort {
+.viewPort {
     display:        flex;
     flex-direction: column;
     width:          85vw;
@@ -33,7 +33,7 @@ body, input {
     padding:     0.6em 0.8em;
 }
 
-#toolBar {
+.toolBar {
     flex-grow: 0;
     margin:    0;
     padding:   0 0 0.7em;
@@ -367,13 +367,32 @@ function styleEditBox() {
 let stylingTimer;
 function debounceStyling() {
 
+    editBoxDirty = true;
+
     clearTimeout(stylingTimer);
     stylingTimer = setTimeout(styleEditBox, 2000);
 }
 
 // -----------------------------------------------------------------------------
 
+let editBoxDirty = false;
+function clearEditBox() {
+
+    if (editBoxDirty && !confirm("You will lose any unsaved changes.")) {
+        return;
+    }
+
+    document.getElementById("editBox").innerHTML = "";
+    document.getElementById("fileName").value    = "temp.txt";
+    editBoxDirty                                 = false;
+}
+
 function pickFile() {
+
+    if (editBoxDirty && !confirm("You will lose any unsaved changes.")) {
+        return;
+    }
+
     document.getElementById("filePicker").click();
 }
 
@@ -401,13 +420,18 @@ function loadFile(content) {
     }
 
     styleEditBox();
+    editBoxDirty = false;
 }
 
 function readFile() {
 
     if (this.files.length > 0) {
 
-        document.getElementById("fileName").value = this.files[0].name;
+        let fileName = this.files[0].name;
+        if (fileName.indexOf(".") < 0) {
+            fileName += ".";
+        }
+        document.getElementById("fileName").value = fileName;
 
         const reader = new FileReader();
         reader.addEventListener("load", function () {
@@ -421,7 +445,20 @@ function readFile() {
 
 function downloadFile() {
 
+    let fileType = "text/plain";
+    let fileName = document.getElementById("fileName").value;
+
+    if (fileName[fileName.length - 1] == ".") {
+        fileType = "application/octet-stream";
+        fileName = fileName.substring(0, fileName.length - 1);
+    }
+    else if (fileName.indexOf(".") < 0) {
+        fileName += ".txt";
+    }
+
     let content = getUnstyledHTML(document.getElementById("editBox"));
+        content = content.replace(/&lt;/g,       "<");
+        content = content.replace(/&gt;/g,       ">");
         content = content.replace(/<div[^>]*>/g, "\n");
         content = content.replace(/<\/div>/g,    "");
         content = content.replace(/<br>/g,       "");
@@ -432,18 +469,19 @@ function downloadFile() {
 
     const url = URL.createObjectURL(new Blob(
         [content],
-        { type: "text/plain" }
+        { type: fileType }
     ));
 
     const link          = document.createElement("a");
           link.href     = url;
-          link.download = document.getElementById("fileName").value;
+          link.download = fileName;
 
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
 
     URL.revokeObjectURL(url);
+    editBoxDirty = false;
 }
 
 // -----------------------------------------------------------------------------
@@ -457,6 +495,8 @@ function onPageLoad() {
     document
         .getElementById("editBox")
         .addEventListener("input", debounceStyling);
+
+    clearEditBox();
 }
 
 // -----------------------------------------------------------------------------
@@ -465,8 +505,12 @@ function onPageLoad() {
 </head>
 <body onload="onPageLoad()">
 
-    <div id="viewPort">
-        <div id="toolBar">
+    <div class="viewPort">
+        <div class="toolBar">
+
+            <input type="button"
+                   value="New File"
+                   onclick="clearEditBox()">
 
             <input type="file"
                    id="filePicker"
@@ -481,7 +525,7 @@ function onPageLoad() {
                    onclick="downloadFile()">
 
             <label for="fileName">Current File:</label>
-            <input type="text" id="fileName" value="temp.txt">
+            <input type="text" id="fileName">
 
         </div>
         <div id="editBox" contenteditable="true" spellcheck="false"></div>
