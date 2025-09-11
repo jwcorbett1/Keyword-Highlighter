@@ -83,15 +83,53 @@ class InputToken {
     }
 }
 
+function splitRawToken(rawTokens, index, separator) {
+
+    const newTokens = rawTokens[index].split(separator)
+                                      .filter((s) => s.length > 0);
+
+    if (newTokens.length > 0) {
+        rawTokens.splice(index, 1, ...newTokens);
+        return false;
+    }
+    else {
+        rawTokens.splice(index, 1);
+        return true;
+    }
+}
+
 function tokenizeInput(input) {
 
     const tokens    = [];
-    const rawTokens = input.split(/\W+/).filter((s) => s.length > 0);
+    const rawTokens = input.split(/[^\w#.-]+/)
+                           .filter((s) => s.length > 0);
 
     for (let index=0, token=0; token < rawTokens.length; token++) {
 
-        index                 = input.indexOf(rawTokens[token], index);
-        tokens[tokens.length] = new InputToken(rawTokens[token], index);
+        let recheck = false;
+
+        if (rawTokens[token].indexOf("#") > 0) {
+            recheck = splitRawToken(rawTokens, token, "#");
+        }
+
+        if (rawTokens[token].indexOf("--") > -1 ||
+            rawTokens[token].indexOf("-")  >  0 &&
+            rawTokens[token].indexOf("e-") <  0) {
+            recheck = recheck || splitRawToken(rawTokens, token, "-");
+        }
+
+        if (rawTokens[token].indexOf(".") >  0 &&
+            rawTokens[token].search(/\d/) != 0) {
+            recheck = recheck || splitRawToken(rawTokens, token, ".");
+        }
+
+        if (recheck) {
+            token--;
+            continue;
+        }
+
+        index = input.indexOf(rawTokens[token], index);
+        tokens.push(new InputToken(rawTokens[token], index));
 
         index += rawTokens[token].length;
     }
@@ -99,7 +137,7 @@ function tokenizeInput(input) {
     return tokens;
 }
 
-function styleRanges(input, startText, endText, tokens, style) {
+function styleByDelimiters(input, startText, endText, tokens, style) {
 
     for (let endIndex,
              startIndex = input.indexOf(startText);
@@ -144,7 +182,7 @@ function styleRanges(input, startText, endText, tokens, style) {
     }
 }
 
-function styleTokens(wordList, tokens, style) {
+function styleByWordList(wordList, tokens, style) {
 
     for (let index = 0; index < tokens.length; index++) {
         for (let word = 0; word < wordList.length; word++) {
@@ -152,6 +190,15 @@ function styleTokens(wordList, tokens, style) {
             if (tokens[index].text == wordList[word]) {
                 tokens[index].style = style;
             }
+        }
+    }
+}
+
+function styleByRegex(regex, tokens, style) {
+
+    for (let index = 0; index < tokens.length; index++) {
+        if (regex.test(tokens[index].text)) {
+            tokens[index].style = style;
         }
     }
 }
@@ -183,134 +230,57 @@ function buildStyledHTML(input, tokens) {
 
 // -----------------------------------------------------------------------------
 
-const keywordList = [
-    "_Alignas",
-    "_Alignof",
-    "_Atomic",
-    "_BitInt",
-    "_Bool",
-    "_Complex",
-    "_Decimal128",
-    "_Decimal32",
-    "_Decimal64",
-    "_Generic",
-    "_Imaginary",
-    "_Noreturn",
-    "_Static_assert",
-    "_Thread_local",
-    "alignas",
-    "alignof",
-    "asm",
-    "atomic_bool",
-    "atomic_char",
-    "atomic_char16_t",
-    "atomic_char32_t",
-    "atomic_char8_t",
-    "atomic_int",
-    "atomic_int_fast16_t",
-    "atomic_int_fast32_t",
-    "atomic_int_fast64_t",
-    "atomic_int_fast8_t",
-    "atomic_int_least16_t",
-    "atomic_int_least32_t",
-    "atomic_int_least64_t",
-    "atomic_int_least8_t",
-    "atomic_intmax_t",
-    "atomic_intptr_t",
-    "atomic_llong",
-    "atomic_long",
-    "atomic_ptrdiff_t",
-    "atomic_schar",
-    "atomic_short",
-    "atomic_size_t",
-    "atomic_uchar",
-    "atomic_uint",
-    "atomic_uint_fast16_t",
-    "atomic_uint_fast32_t",
-    "atomic_uint_fast64_t",
-    "atomic_uint_fast8_t",
-    "atomic_uint_least16_t",
-    "atomic_uint_least32_t",
-    "atomic_uint_least64_t",
-    "atomic_uint_least8_t",
-    "atomic_uintmax_t",
-    "atomic_uintptr_t",
-    "atomic_ullong",
-    "atomic_ulong",
-    "atomic_ushort",
-    "atomic_wchar_t",
-    "auto",
+const dataTypeList = [
     "bool",
+    "char",
+    "double",
+    "float",
+    "int",
+    "long",
+    "short",
+    "signed",
+    "unsigned",
+    "void",
+    "wchar_t"
+];
+
+const userDefinedList = [
+    "enum",
+    "struct",
+    "typedef",
+    "union"
+];
+
+const keywordList = [
+    "#define",
+    "#elif",
+    "#else",
+    "#endif",
+    "#error",
+    "#if",
+    "#ifdef",
+    "#ifndef",
+    "#include",
+    "#pragma",
+    "#undef",
+    "auto",
     "break",
     "case",
-    "char",
-    "char16_t",
-    "char32_t",
-    "char8_t",
-    "complex",
     "const",
-    "constexpr",
     "continue",
     "default",
     "do",
-    "double",
     "else",
-    "enum",
     "extern",
-    "false",
-    "float",
     "for",
-    "fortran",
     "goto",
     "if",
-    "imaginary",
-    "inline",
-    "int",
-    "int_fast16_t",
-    "int_fast32_t",
-    "int_fast64_t",
-    "int_fast8_t",
-    "int_least16_t",
-    "int_least32_t",
-    "int_least64_t",
-    "int_least8_t",
-    "intmax_t",
-    "intptr_t",
-    "long",
-    "noreturn",
-    "nullptr",
-    "ptrdiff_t",
     "register",
-    "restrict",
     "return",
-    "short",
-    "signed",
-    "size_t",
     "sizeof",
     "static",
-    "static_assert",
-    "struct",
     "switch",
-    "thread_local",
-    "true",
-    "typedef",
-    "typeof",
-    "typeof_unqual",
-    "uint_fast16_t",
-    "uint_fast32_t",
-    "uint_fast64_t",
-    "uint_fast8_t",
-    "uint_least16_t",
-    "uint_least32_t",
-    "uint_least64_t",
-    "uint_least8_t",
-    "uintmax_t",
-    "uintptr_t",
-    "union",
-    "unsigned",
-    "void",
     "volatile",
-    "wchar_t",
     "while"
 ];
 
@@ -340,7 +310,7 @@ function saveCaret(element, html) {
     element.innerHTML = html;
 
     const tree = document.createTreeWalker(element, NodeFilter.SHOW_TEXT);
-    while (tree.nextNode() != null && caret > tree.currentNode.length) {
+    while (tree.nextNode() && caret > tree.currentNode.length) {
         caret -= tree.currentNode.length;
     }
     caret = Math.min(caret, tree.currentNode.length);
@@ -357,9 +327,15 @@ function styleEditBox() {
     const html    = getUnstyledHTML(editBox);
     const tokens  = tokenizeInput(html);
 
-    styleRanges(html, "\"", "\"", tokens, "literal");
-    styleRanges(html, "/*", "*/", tokens, "comment");
-    styleTokens(keywordList, tokens, "keyword");
+    styleByDelimiters(html, "/*", "*/", tokens, "comment");
+    styleByDelimiters(html, "\'", "\'", tokens, "literal");
+    styleByDelimiters(html, "\"", "\"", tokens, "literal");
+
+    styleByRegex(/^[\d.-]/, tokens, "literal");
+
+    styleByWordList(dataTypeList,    tokens, "keyword");
+    styleByWordList(userDefinedList, tokens, "keyword");
+    styleByWordList(keywordList,     tokens, "keyword");
 
     saveCaret(editBox, buildStyledHTML(html, tokens));
 }
