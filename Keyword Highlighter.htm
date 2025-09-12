@@ -65,6 +65,116 @@ body, input {
     </style>
     <script>
 // -----------------------------------------------------------------------------
+/*
+
+class StringToken {
+
+    constructor(string, start, style) {
+        this.string = string;
+        this.start  = start;
+        this.style  = style;
+    }
+
+    get end() {
+        return this.start + this.string.length;
+    }
+
+    contains(s) {
+        return this.string.indexOf(s) > -1;
+    }
+}
+
+function segmentString(string, regex) {
+
+    return string.split(regex).filter((s) => s.length > 0);
+}
+
+function tokenizeString(string, start, end, regex, nextFunc, style) {
+
+    const segments = segmentString(string.substring(start, end), regex);
+    const tokens   = [];
+
+    let index = 0;
+    while (index < segments.length) {
+
+        if (nextFunc && !nextFunc(segments, index)) {
+            continue;
+        }
+
+        start = string.indexOf(segments[index], start);
+        tokens.push(new StringToken(segments[index], start, style);
+        start += segments[index].length;
+
+        index++;
+    }
+
+    return tokens;
+}
+
+function splitSegment(segments, index, regex) {
+
+    const newSegments = segmentString(segments[index], regex);
+
+    if (newSegments.length > 0) {
+        segments.splice(index, 1, ...newSegments);
+        return true;
+    }
+
+    else {
+        segments.splice(index, 1);
+        return false;
+    }
+}
+
+function validateSegment(segments, index) {
+
+    let valid = true;
+
+    if (segments[index].indexOf("#") > 0) {
+        valid = splitSegment(segments, index, /(?<!^)#/);
+    }
+
+    if (segments[index].indexOf("-") > 0) {
+        valid = valid && splitSegment(segments, index, /(?<!^)(?<!e)-/i);
+    }
+
+    if (segments[index].search(/-?\.?\d/) > 0) {
+        valid = valid && splitSegment(segments, index, ".");
+    }
+
+    return valid;
+}
+
+function replaceTokens(tokens, start, end, delimiter, style) {
+
+    let insert = tokens.length > 0 ? -1 : 0;
+    let count  = 0;
+    for (let index = 0; index < tokens.length; index++) {
+
+        if (tokens[index].start < start) {
+            continue;
+        }
+
+        if (insert < 0) {
+            if (index > 0 && tokens[index - 1].contains(delimiter)) {
+                break;
+            }
+            insert = index;
+        }
+
+        if (tokens[index].start >= end) {
+            break;
+        }
+
+        count++;
+    }
+
+    if (insert > -1) {
+    }
+}
+
+*/
+// -----------------------------------------------------------------------------
 
 class InputToken {
 
@@ -74,7 +184,7 @@ class InputToken {
         this.style = style;
     }
 
-    getEnd() {
+    get end() {
         return this.index + this.text.length;
     }
 
@@ -83,44 +193,42 @@ class InputToken {
     }
 }
 
-function splitRawToken(rawTokens, index, separator) {
+function splitRawText(rawText, index, separator) {
 
-    const newTokens = rawTokens[index].split(separator)
-                                      .filter((s) => s.length > 0);
+    const newTokens = rawText[index].split(separator)
+                                    .filter((s) => s.length > 0);
 
     if (newTokens.length > 0) {
-        rawTokens.splice(index, 1, ...newTokens);
+        rawText.splice(index, 1, ...newTokens);
         return false;
     }
     else {
-        rawTokens.splice(index, 1);
+        rawText.splice(index, 1);
         return true;
     }
 }
 
 function tokenizeInput(input) {
 
-    const tokens    = [];
-    const rawTokens = input.split(/[^\w#.-]+/)
-                           .filter((s) => s.length > 0);
+    const tokens  = [];
+    const rawText = input.split(/[^\w#.-]+/)
+                         .filter((s) => s.length > 0);
 
-    for (let index=0, token=0; token < rawTokens.length; token++) {
+    for (let index=0, token=0; token < rawText.length; token++) {
 
         let recheck = false;
 
-        if (rawTokens[token].indexOf("#") > 0) {
-            recheck = splitRawToken(rawTokens, token, "#");
+        if (rawText[token].indexOf("#") > 0) {
+            recheck = splitRawText(rawText, token, /(?<!^)#/);
         }
 
-        if (rawTokens[token].indexOf("--") > -1 ||
-            rawTokens[token].indexOf("-")  >  0 &&
-            rawTokens[token].indexOf("e-") <  0) {
-            recheck = recheck || splitRawToken(rawTokens, token, "-");
+        if (rawText[token].indexOf("-") > 0) {
+            recheck = recheck ||
+                      splitRawText(rawText, token, /(?<!^)(?<!e)-/i);
         }
 
-        if (rawTokens[token].indexOf(".") >  0 &&
-            rawTokens[token].search(/\d/) != 0) {
-            recheck = recheck || splitRawToken(rawTokens, token, ".");
+        if (rawText[token].search(/-?\.?\d/) > 0) {
+            recheck = recheck || splitRawText(rawText, token, ".");
         }
 
         if (recheck) {
@@ -128,10 +236,28 @@ function tokenizeInput(input) {
             continue;
         }
 
-        index = input.indexOf(rawTokens[token], index);
-        tokens.push(new InputToken(rawTokens[token], index));
+        index = input.indexOf(rawText[token], index);
+        tokens.push(new InputToken(rawText[token], index));
 
-        index += rawTokens[token].length;
+        index += rawText[token].length;
+    }
+
+    return tokens;
+}
+
+function tokenizeRegion(input, start, end, style) {
+
+    const rawText = input.substring(start, end)
+                         .split(/<\/?div[^>]*>|<br>/i)
+                         .filter((s) => s.length > 0);
+
+    const tokens = [];
+    for (let index=start, token=0; token < rawText.length; token++) {
+
+        index = input.indexOf(rawText[token], index);
+        tokens.push(new InputToken(rawText[token], index, style));
+
+        index += rawText[token].length;
     }
 
     return tokens;
@@ -150,9 +276,6 @@ function styleByDelimiters(input, startText, endText, tokens, style) {
         } else {
             endIndex  = input.length;
         }
-
-        const text  = input.substring(startIndex, endIndex);
-        const token = new InputToken(text, startIndex, style);
 
         let tokenStart = tokens.length > 0  ?  -1 : 0;
         let tokenCount = 0;
@@ -177,8 +300,15 @@ function styleByDelimiters(input, startText, endText, tokens, style) {
         }
 
         if (tokenStart > -1) {
-            tokens.splice(tokenStart, tokenCount, token);
+
+            const newTokens = tokenizeRegion(
+                input, startIndex, endIndex, style);
+
+            if (newTokens.length > 0) {
+                tokens.splice(tokenStart, tokenCount, ...newTokens);
+            }
         }
+
     }
 }
 
@@ -218,9 +348,9 @@ function buildStyledHTML(input, tokens) {
         html += "</span>";
 
         if (index + 1 >= validTokens.length) {
-            html += input.substring(validTokens[index].getEnd());
+            html += input.substring(validTokens[index].end);
         } else {
-            html += input.substring(validTokens[index].getEnd(),
+            html += input.substring(validTokens[index].end,
                                     validTokens[index + 1].index);
         }
     }
@@ -331,7 +461,7 @@ function styleEditBox() {
     styleByDelimiters(html, "\'", "\'", tokens, "literal");
     styleByDelimiters(html, "\"", "\"", tokens, "literal");
 
-    styleByRegex(/^[\d.-]/, tokens, "literal");
+    styleByRegex(/^-?\.?\d/, tokens, "literal");
 
     styleByWordList(dataTypeList,    tokens, "keyword");
     styleByWordList(userDefinedList, tokens, "keyword");
@@ -377,7 +507,7 @@ function loadFile(content) {
     content = content.replace(/</g, "&lt;").replace(/>/g, "&gt;");
 
     const editBox = document.getElementById("editBox");
-    const lines   = content.split(/(?:\r*\n|\r)/);
+    const lines   = content.split(/\r*\n|\r/);
 
     if (lines.length < 2) {
         editBox.innerHTML = lines[0];
@@ -433,11 +563,11 @@ function downloadFile() {
     }
 
     let content = getUnstyledHTML(document.getElementById("editBox"));
-        content = content.replace(/&lt;/g,       "<");
-        content = content.replace(/&gt;/g,       ">");
-        content = content.replace(/<div[^>]*>/g, "\n");
-        content = content.replace(/<\/div>/g,    "");
-        content = content.replace(/<br>/g,       "");
+        content = content.replace(/&lt;/g,        "<");
+        content = content.replace(/&gt;/g,        ">");
+        content = content.replace(/<div[^>]*>/gi, "\n");
+        content = content.replace(/<\/div>/gi,    "");
+        content = content.replace(/<br>/gi,       "");
 
     if (content[0] == "\n") {
         content = content.substring(1);
