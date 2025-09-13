@@ -65,7 +65,6 @@ body, input {
     </style>
     <script>
 // -----------------------------------------------------------------------------
-/*
 
 class StringToken {
 
@@ -94,18 +93,18 @@ function tokenizeString(string, start, end, regex, nextFunc, style) {
     const segments = segmentString(string.substring(start, end), regex);
     const tokens   = [];
 
-    let index = 0;
-    while (index < segments.length) {
+    let i = 0;
+    while (i < segments.length) {
 
-        if (nextFunc && !nextFunc(segments, index)) {
+        if (nextFunc && !nextFunc(segments, i)) {
             continue;
         }
 
-        start = string.indexOf(segments[index], start);
-        tokens.push(new StringToken(segments[index], start, style);
-        start += segments[index].length;
+        start = string.indexOf(segments[i], start);
+        tokens.push(new StringToken(segments[i], start, style));
+        start += segments[i].length;
 
-        index++;
+        i++;
     }
 
     return tokens;
@@ -138,220 +137,32 @@ function validateSegment(segments, index) {
         valid = valid && splitSegment(segments, index, /(?<!^)(?<!e)-/i);
     }
 
-    if (segments[index].search(/-?\.?\d/) > 0) {
+    if (segments[index].search(/-?\.?\d/) != 0) {
         valid = valid && splitSegment(segments, index, ".");
     }
 
     return valid;
 }
 
-function replaceTokens(tokens, start, end, delimiter, style) {
+function buildStyledHTML(string, tokens) {
 
-    let insert = tokens.length > 0 ? -1 : 0;
-    let count  = 0;
-    for (let index = 0; index < tokens.length; index++) {
-
-        if (tokens[index].start < start) {
-            continue;
-        }
-
-        if (insert < 0) {
-            if (index > 0 && tokens[index - 1].contains(delimiter)) {
-                break;
-            }
-            insert = index;
-        }
-
-        if (tokens[index].start >= end) {
-            break;
-        }
-
-        count++;
+    const styles = tokens.filter((t) => t.style != "");
+    if (styles.length < 1) {
+        return string;
     }
 
-    if (insert > -1) {
-    }
-}
+    let html = string.substring(0, styles[0].start);
 
-*/
-// -----------------------------------------------------------------------------
+    for (let i = 0; i < styles.length; i++) {
 
-class InputToken {
-
-    constructor(text, index, style = "") {
-        this.text  = text;
-        this.index = index;
-        this.style = style;
-    }
-
-    get end() {
-        return this.index + this.text.length;
-    }
-
-    contains(text) {
-        return this.text.indexOf(text) > -1;
-    }
-}
-
-function splitRawText(rawText, index, separator) {
-
-    const newTokens = rawText[index].split(separator)
-                                    .filter((s) => s.length > 0);
-
-    if (newTokens.length > 0) {
-        rawText.splice(index, 1, ...newTokens);
-        return false;
-    }
-    else {
-        rawText.splice(index, 1);
-        return true;
-    }
-}
-
-function tokenizeInput(input) {
-
-    const tokens  = [];
-    const rawText = input.split(/[^\w#.-]+/)
-                         .filter((s) => s.length > 0);
-
-    for (let index=0, token=0; token < rawText.length; token++) {
-
-        let recheck = false;
-
-        if (rawText[token].indexOf("#") > 0) {
-            recheck = splitRawText(rawText, token, /(?<!^)#/);
-        }
-
-        if (rawText[token].indexOf("-") > 0) {
-            recheck = recheck ||
-                      splitRawText(rawText, token, /(?<!^)(?<!e)-/i);
-        }
-
-        if (rawText[token].search(/-?\.?\d/) > 0) {
-            recheck = recheck || splitRawText(rawText, token, ".");
-        }
-
-        if (recheck) {
-            token--;
-            continue;
-        }
-
-        index = input.indexOf(rawText[token], index);
-        tokens.push(new InputToken(rawText[token], index));
-
-        index += rawText[token].length;
-    }
-
-    return tokens;
-}
-
-function tokenizeRegion(input, start, end, style) {
-
-    const rawText = input.substring(start, end)
-                         .split(/<\/?div[^>]*>|<br>/i)
-                         .filter((s) => s.length > 0);
-
-    const tokens = [];
-    for (let index=start, token=0; token < rawText.length; token++) {
-
-        index = input.indexOf(rawText[token], index);
-        tokens.push(new InputToken(rawText[token], index, style));
-
-        index += rawText[token].length;
-    }
-
-    return tokens;
-}
-
-function styleByDelimiters(input, startText, endText, tokens, style) {
-
-    for (let endIndex,
-             startIndex = input.indexOf(startText);
-             startIndex > -1;
-             startIndex = input.indexOf(startText, endIndex)) {
-
-        endIndex = input.indexOf(endText, startIndex + startText.length);
-        if (endIndex > -1) {
-            endIndex += endText.length;
-        } else {
-            endIndex  = input.length;
-        }
-
-        let tokenStart = tokens.length > 0  ?  -1 : 0;
-        let tokenCount = 0;
-        for (let index = 0; index < tokens.length; index++) {
-
-            if (tokens[index].index < startIndex) {
-                continue;
-            }
-
-            if (tokenStart < 0) {
-                if (index > 0 && tokens[index - 1].contains(startText)) {
-                    break;
-                }
-                tokenStart = index;
-            }
-
-            if (tokens[index].index >= endIndex) {
-                break;
-            }
-
-            tokenCount++;
-        }
-
-        if (tokenStart > -1) {
-
-            const newTokens = tokenizeRegion(
-                input, startIndex, endIndex, style);
-
-            if (newTokens.length > 0) {
-                tokens.splice(tokenStart, tokenCount, ...newTokens);
-            }
-        }
-
-    }
-}
-
-function styleByWordList(wordList, tokens, style) {
-
-    for (let index = 0; index < tokens.length; index++) {
-        for (let word = 0; word < wordList.length; word++) {
-
-            if (tokens[index].text == wordList[word]) {
-                tokens[index].style = style;
-            }
-        }
-    }
-}
-
-function styleByRegex(regex, tokens, style) {
-
-    for (let index = 0; index < tokens.length; index++) {
-        if (regex.test(tokens[index].text)) {
-            tokens[index].style = style;
-        }
-    }
-}
-
-function buildStyledHTML(input, tokens) {
-
-    const validTokens = tokens.filter((t) => t.style != "");
-    if (validTokens.length < 1) {
-        return input;
-    }
-
-    let html = input.substring(0, validTokens[0].index);
-    for (let index = 0; index < validTokens.length; index++) {
-
-        html += "<span class='" + validTokens[index].style + "'>";
-        html += validTokens[index].text;
+        html += "<span class='" + styles[i].style + "'>";
+        html += styles[i].string;
         html += "</span>";
 
-        if (index + 1 >= validTokens.length) {
-            html += input.substring(validTokens[index].end);
+        if (i + 1 < styles.length) {
+            html += string.substring(styles[i].end, styles[i + 1].start);
         } else {
-            html += input.substring(validTokens[index].end,
-                                    validTokens[index + 1].index);
+            html += string.substring(styles[i].end);
         }
     }
 
@@ -360,7 +171,92 @@ function buildStyledHTML(input, tokens) {
 
 // -----------------------------------------------------------------------------
 
-const dataTypeList = [
+class TokenRange {
+
+    constructor(start, count) {
+        this.start = start;
+        this.count = count;
+    }
+}
+
+function selectTokens(tokens, start, end, delimiter) {
+
+    const range = new TokenRange(tokens.length > 0 ? -1 : 0, 0);
+
+    for (let i = 0; i < tokens.length; i++) {
+
+        if (tokens[i].start < start) {
+            continue;
+        }
+
+        if (range.start < 0) {
+            if (i > 0 && tokens[i - 1].contains(delimiter)) {
+                break;
+            }
+            range.start = i;
+        }
+
+        if (tokens[i].start >= end) {
+            break;
+        }
+
+        range.count++;
+    }
+
+    return range;
+}
+
+function styleByDelimiters(string, delimiters, tokens, style) {
+
+    let end;
+    for (let start = string.indexOf(delimiters[0]);
+             start > -1;
+             start = string.indexOf(delimiters[0], end)) {
+
+        end = string.indexOf(delimiters[1], start + delimiters[0].length);
+        if (end > -1) {
+            end += delimiters[1].length;
+        } else {
+            end  = string.length;
+        }
+
+        const range = selectTokens(tokens, start, end, delimiters[0]);
+        if (range.start < 0) {
+            continue;
+        }
+
+        const newTokens = tokenizeString(string, start, end,
+            /<\/?div[^>]*>|<br>/i, null, style);
+
+        tokens.splice(range.start, range.count, ...newTokens);
+    }
+}
+
+function styleByList(list, tokens, style) {
+
+    for (let i = 0; i < tokens.length; i++) {
+        for (let j = 0; j < list.length; j++) {
+
+            if (tokens[i].string == list[j]) {
+                tokens[i].style  =  style;
+            }
+        }
+    }
+}
+
+function styleByRegex(regex, tokens, style) {
+
+    for (let i = 0; i < tokens.length; i++) {
+
+        if (regex.test(tokens[i].string)) {
+            tokens[i].style = style;
+        }
+    }
+}
+
+// -----------------------------------------------------------------------------
+
+const dataTypes = [
     "bool",
     "char",
     "double",
@@ -374,15 +270,15 @@ const dataTypeList = [
     "wchar_t"
 ];
 
-const userDefinedList = [
+const userDefined = [
+    "#define",
     "enum",
     "struct",
     "typedef",
     "union"
 ];
 
-const keywordList = [
-    "#define",
+const keywords = [
     "#elif",
     "#else",
     "#endif",
@@ -455,17 +351,18 @@ function styleEditBox() {
 
     const editBox = document.getElementById("editBox");
     const html    = getUnstyledHTML(editBox);
-    const tokens  = tokenizeInput(html);
+    const tokens  = tokenizeString(html, 0, html.length,
+        /[^\w#.-]+/, validateSegment, "");
 
-    styleByDelimiters(html, "/*", "*/", tokens, "comment");
-    styleByDelimiters(html, "\'", "\'", tokens, "literal");
-    styleByDelimiters(html, "\"", "\"", tokens, "literal");
+    styleByDelimiters(html, ["/*", "*/"], tokens, "comment");
+    styleByDelimiters(html, ["\'", "\'"], tokens, "literal");
+    styleByDelimiters(html, ["\"", "\""], tokens, "literal");
 
     styleByRegex(/^-?\.?\d/, tokens, "literal");
 
-    styleByWordList(dataTypeList,    tokens, "keyword");
-    styleByWordList(userDefinedList, tokens, "keyword");
-    styleByWordList(keywordList,     tokens, "keyword");
+    styleByList(dataTypes,   tokens, "keyword");
+    styleByList(userDefined, tokens, "keyword");
+    styleByList(keywords,    tokens, "keyword");
 
     saveCaret(editBox, buildStyledHTML(html, tokens));
 }
