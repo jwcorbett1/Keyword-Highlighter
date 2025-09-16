@@ -66,6 +66,62 @@ body, input {
     <script>
 // -----------------------------------------------------------------------------
 
+const dataTypes = [
+    "bool",
+    "char",
+    "double",
+    "float",
+    "int",
+    "long",
+    "short",
+    "signed",
+    "unsigned",
+    "void",
+    "wchar_t"
+];
+
+const userDefined = [
+    "#define",
+    "enum",
+    "struct",
+    "typedef",
+    "union"
+];
+
+const keywords = [
+    "#elif",
+    "#else",
+    "#endif",
+    "#error",
+    "#if",
+    "#ifdef",
+    "#ifndef",
+    "#include",
+    "#pragma",
+    "#undef",
+    "auto",
+    "break",
+    "case",
+    "const",
+    "continue",
+    "default",
+    "do",
+    "else",
+    "extern",
+    "for",
+    "goto",
+    "if",
+    "register",
+    "return",
+    "sizeof",
+    "static",
+    "switch",
+    "volatile",
+    "while"
+];
+
+// -----------------------------------------------------------------------------
+
 class StringToken {
 
     constructor(string, start, style) {
@@ -144,9 +200,20 @@ function validateSegment(segments, index) {
     return valid;
 }
 
-function buildStyledHTML(string, tokens) {
+function ignoreAnnotations(tokens, annotations) {
 
-    const styles = tokens.filter((t) => t.style != "");
+    let styles = tokens.filter((t) => t.style != "");
+
+    for (let i = 0; i < annotations.length; i++) {
+        styles = styles.filter((t) => t.styles != annotations[i]);
+    }
+
+    return styles;
+}
+
+function buildStyledHTML(string, tokens, annotations) {
+
+    const styles = ignoreAnnotations(tokens, annotations);
     if (styles.length < 1) {
         return string;
     }
@@ -173,15 +240,18 @@ function buildStyledHTML(string, tokens) {
 
 class TokenRange {
 
-    constructor(start, count) {
-        this.start = start;
-        this.count = count;
+    constructor() {
+        this.start = 0;
+        this.count = 0;
     }
 }
 
 function selectTokens(tokens, start, end, delimiter) {
 
-    const range = new TokenRange(tokens.length > 0 ? -1 : 0, 0);
+    const range = new TokenRange();
+    if (tokens.length > 0) {
+        range.start = -1;
+    }
 
     for (let i = 0; i < tokens.length; i++) {
 
@@ -256,60 +326,6 @@ function styleByRegex(regex, tokens, style) {
 
 // -----------------------------------------------------------------------------
 
-const dataTypes = [
-    "bool",
-    "char",
-    "double",
-    "float",
-    "int",
-    "long",
-    "short",
-    "signed",
-    "unsigned",
-    "void",
-    "wchar_t"
-];
-
-const userDefined = [
-    "#define",
-    "enum",
-    "struct",
-    "typedef",
-    "union"
-];
-
-const keywords = [
-    "#elif",
-    "#else",
-    "#endif",
-    "#error",
-    "#if",
-    "#ifdef",
-    "#ifndef",
-    "#include",
-    "#pragma",
-    "#undef",
-    "auto",
-    "break",
-    "case",
-    "const",
-    "continue",
-    "default",
-    "do",
-    "else",
-    "extern",
-    "for",
-    "goto",
-    "if",
-    "register",
-    "return",
-    "sizeof",
-    "static",
-    "switch",
-    "volatile",
-    "while"
-];
-
 function getUnstyledHTML(element) {
 
     let html = element.innerHTML;
@@ -321,10 +337,48 @@ function getUnstyledHTML(element) {
     return html;
 }
 
+function getPlainText(element) {
+
+    let text = getUnstyledHTML(element);
+        text = text.replace(/&lt;/g,        "<");
+        text = text.replace(/&gt;/g,        ">");
+        text = text.replace(/<div[^>]*>/gi, "\n");
+        text = text.replace(/<\/div>/gi,    "");
+        text = text.replace(/<br>/gi,       "");
+
+    if (text[0] == "\n") {
+        text = text.substring(1);
+    }
+
+    return text;
+}
+
+function textToHTML(text) {
+
+    text = text.replace(/</g, "&lt;");
+    text = text.replace(/>/g, "&gt;");
+
+    const lines = text.split(/\r*\n|\r/);
+    if (lines.length < 2) {
+        return text[0];
+    }
+
+    let html = "";
+    for (let i = 0; i < lines.length; i++) {
+
+        if (lines[i].length < 1) {
+            lines[i] = "<br>";
+        }
+        html += "<div>" + lines[i] + "</div>";
+    }
+
+    return html;
+}
+
 function saveCaret(element, html) {
 
     const selection = window.getSelection();
-    if (selection && selection.rangeCount < 1) {
+    if (!selection || selection.rangeCount < 1) {
         element.innerHTML = html;
         return;
     }
@@ -364,10 +418,14 @@ function styleEditBox() {
     styleByList(userDefined, tokens, "keyword");
     styleByList(keywords,    tokens, "keyword");
 
-    saveCaret(editBox, buildStyledHTML(html, tokens));
+    saveCaret(editBox, buildStyledHTML(html, tokens, []));
 }
 
+// -----------------------------------------------------------------------------
+
+let editBoxDirty = false;
 let stylingTimer;
+
 function debounceStyling() {
 
     editBoxDirty = true;
@@ -376,12 +434,14 @@ function debounceStyling() {
     stylingTimer = setTimeout(styleEditBox, 2000);
 }
 
-// -----------------------------------------------------------------------------
+function dropChanges() {
 
-let editBoxDirty = false;
+    return !editBoxDirty || confirm("You will lose any unsaved changes.");
+}
+
 function clearEditBox() {
 
-    if (editBoxDirty && !confirm("You will lose any unsaved changes.")) {
+    if (!dropChanges()) {
         return;
     }
 
@@ -392,35 +452,16 @@ function clearEditBox() {
 
 function pickFile() {
 
-    if (editBoxDirty && !confirm("You will lose any unsaved changes.")) {
+    if (!dropChanges()) {
         return;
     }
 
     document.getElementById("filePicker").click();
 }
 
-function loadFile(content) {
+function loadFile(text) {
 
-    content = content.replace(/</g, "&lt;").replace(/>/g, "&gt;");
-
-    const editBox = document.getElementById("editBox");
-    const lines   = content.split(/\r*\n|\r/);
-
-    if (lines.length < 2) {
-        editBox.innerHTML = lines[0];
-    } else {
-
-        let html = "";
-        for (let index = 0; index < lines.length; index++) {
-
-            if (lines[index].length < 1) {
-                lines[index] = "<br>";
-            }
-            html += "<div>" + lines[index] + "</div>";
-        }
-
-        editBox.innerHTML = html;
-    }
+    document.getElementById("editBox").innerHTML = textToHTML(text);
 
     styleEditBox();
     editBoxDirty = false;
@@ -428,62 +469,56 @@ function loadFile(content) {
 
 function readFile() {
 
-    if (this.files.length > 0) {
-
-        let fileName = this.files[0].name;
-        if (fileName.indexOf(".") < 0) {
-            fileName += ".";
-        }
-        document.getElementById("fileName").value = fileName;
-
-        const reader = new FileReader();
-        reader.addEventListener("load", function () {
-            loadFile(reader.result);
-        });
-
-        reader.readAsText(this.files[0]);
-        this.value = "";
+    if (this.files.length < 1) {
+        return;
     }
+
+    let fileName = this.files[0].name;
+    if (fileName.indexOf(".") < 0) {
+        fileName += ".";
+    }
+    document.getElementById("fileName").value = fileName;
+
+    const reader = new FileReader();
+    reader.addEventListener("load", function () {
+        loadFile(reader.result);
+    });
+
+    reader.readAsText(this.files[0]);
+    this.value = "";
 }
 
-function downloadFile() {
+function dispatchFile(name, type, content) {
 
-    let fileType = "text/plain";
-    let fileName = document.getElementById("fileName").value;
+    const file = new Blob([content], { type: type });
+    const url  = URL.createObjectURL(file);
 
-    if (fileName[fileName.length - 1] == ".") {
-        fileType = "application/octet-stream";
-        fileName = fileName.substring(0, fileName.length - 1);
-    }
-    else if (fileName.indexOf(".") < 0) {
-        fileName += ".txt";
-    }
-
-    let content = getUnstyledHTML(document.getElementById("editBox"));
-        content = content.replace(/&lt;/g,        "<");
-        content = content.replace(/&gt;/g,        ">");
-        content = content.replace(/<div[^>]*>/gi, "\n");
-        content = content.replace(/<\/div>/gi,    "");
-        content = content.replace(/<br>/gi,       "");
-
-    if (content[0] == "\n") {
-        content = content.substring(1);
-    }
-
-    const url = URL.createObjectURL(new Blob(
-        [content],
-        { type: fileType }
-    ));
-
-    const link          = document.createElement("a");
-          link.href     = url;
-          link.download = fileName;
+    const link    = document.createElement("a");
+    link.href     = url;
+    link.download = name;
 
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
 
     URL.revokeObjectURL(url);
+}
+
+function downloadFile() {
+
+    let type = "text/plain";
+    let name = document.getElementById("fileName").value;
+    if (name.indexOf(".") < 0) {
+        name += ".txt";
+    }
+
+    else if (name[name.length - 1] == ".") {
+        name = name.substring(0, name.length - 1);
+        type = "application/octet-stream";
+    }
+
+    const content = getPlainText(document.getElementById("editBox"));
+    dispatchFile(name, type, content);
     editBoxDirty = false;
 }
 
@@ -491,13 +526,11 @@ function downloadFile() {
 
 function onPageLoad() {
 
-    document
-        .getElementById("filePicker")
-        .addEventListener("change", readFile);
+    document.getElementById("filePicker")
+            .addEventListener("change", readFile);
 
-    document
-        .getElementById("editBox")
-        .addEventListener("input", debounceStyling);
+    document.getElementById("editBox")
+            .addEventListener("input", debounceStyling);
 
     clearEditBox();
 }
