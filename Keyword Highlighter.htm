@@ -222,9 +222,9 @@ function buildStyledHTML(string, tokens, annotations) {
 
     for (let i = 0; i < styles.length; i++) {
 
-        html += "<span class='" + styles[i].style + "'>";
-        html += styles[i].string;
-        html += "</span>";
+        html += "<span class='"  + styles[i].style + "'>" +
+                styles[i].string +
+                "</span>";
 
         if (i + 1 < styles.length) {
             html += string.substring(styles[i].end, styles[i + 1].start);
@@ -234,6 +234,72 @@ function buildStyledHTML(string, tokens, annotations) {
     }
 
     return html;
+}
+
+// -----------------------------------------------------------------------------
+
+function eraseRange(string, start, end) {
+
+    let result  = string.substring(0, start);
+        result += " ".repeat(end - start);
+        result += string.substring(end);
+
+    return result;
+}
+
+function eraseTokens(string, tokens, style) {
+
+    const ranges = tokens.filter((t) => t.style == style);
+
+    for (let i = 0; i < ranges.length; i++) {
+        string = eraseRange(string, tokens[i].start, tokens[i].end);
+    }
+
+    return string;
+}
+
+function findClosingDelimiter(string, opening, delimiters) {
+
+    const d0 = delimiters[0].length;
+    const d1 = delimiters[1].length;
+
+    let closing = opening;
+    do {
+
+        closing = string.indexOf(delimiters[1], closing + d1);
+        if (closing < 0) {
+            closing = string.length;
+        }
+
+        opening = string.indexOf(delimiters[0], opening + d0);
+        if (opening < 0) {
+            opening = string.length;
+        }
+
+    } while (opening < closing);
+
+    return closing;
+}
+
+function extractTopLevel(string, delimiters, tokens, styles) {
+
+    const d0 = delimiters[0].length;
+    const d1 = delimiters[1].length;
+
+    for (let i = 0; i < styles.length; i++) {
+        string = eraseTokens(string, tokens, styles[i]);
+    }
+
+    let closing;
+    for (let opening = string.indexOf(delimiters[0]);
+             opening > -1;
+             opening = string.indexOf(delimiters[0], closing + d1)) {
+
+        closing = findClosingDelimiter(string, opening, delimiters);
+        string  = eraseRange(string, opening + d0, closing);
+    }
+
+    return string;
 }
 
 // -----------------------------------------------------------------------------
@@ -328,35 +394,31 @@ function styleByRegex(regex, tokens, style) {
 
 function getUnstyledHTML(element) {
 
-    let html = element.innerHTML;
-        html = html.replace(/<span[^>]*>/g, "");
-        html = html.replace(/<font[^>]*>/g, "");
-        html = html.replace(/<\/span>/g, "");
-        html = html.replace(/<\/font>/g, "");
-
-    return html;
+    return element.innerHTML.replace(/<span[^>]*>/g, "")
+                            .replace(/<font[^>]*>/g, "")
+                            .replace(/<\/span>/g, "")
+                            .replace(/<\/font>/g, "");
 }
 
 function getPlainText(element) {
 
-    let text = getUnstyledHTML(element);
-        text = text.replace(/&lt;/g,        "<");
-        text = text.replace(/&gt;/g,        ">");
-        text = text.replace(/<div[^>]*>/gi, "\n");
-        text = text.replace(/<\/div>/gi,    "");
-        text = text.replace(/<br>/gi,       "");
+    let text = getUnstyledHTML(element).replace(/&lt;/g,        "<")
+                                       .replace(/&gt;/g,        ">")
+                                       .replace(/<div[^>]*>/gi, "\n")
+                                       .replace(/<\/div>/gi,    "")
+                                       .replace(/<br>/gi,       "");
 
     if (text[0] == "\n") {
-        text = text.substring(1);
+        return text.substring(1);
+    } else {
+        return text;
     }
-
-    return text;
 }
 
 function textToHTML(text) {
 
-    text = text.replace(/</g, "&lt;");
-    text = text.replace(/>/g, "&gt;");
+    text = text.replace(/</g, "&lt;")
+               .replace(/>/g, "&gt;");
 
     const lines = text.split(/\r*\n|\r/);
     if (lines.length < 2) {
