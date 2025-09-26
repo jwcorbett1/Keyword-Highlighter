@@ -1,0 +1,105 @@
+
+class StyleRange {
+
+    constructor(style, start, end) {
+
+        this.style = style;
+        this.start = start;
+        this.end   = end;
+    }
+}
+
+class StyleBuilder {
+
+    constructor(string) {
+
+        this.string = string;
+        this.edited = string;
+        this.styles = [];
+    }
+
+    overlapsStyle(start, end) {
+
+        for (let i = 0; i < this.styles.length; i++) {
+
+            if (start < this.styles[i].end &&
+                this.styles[i].start < end) {
+
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    // markers === []           - erase matched text
+    // markers === ["/*", "*/"] - erase, but mark beginning and end
+    eraseRange(start, end, markers = []) {
+
+        let count = end - start;
+        if (markers.length > 0) {
+            count -= markers[0].length + markers[1].length;
+        }
+
+        let filler = " ".repeat(count);
+        if (markers.length > 0) {
+            filler = markers[0] + filler + markers[1];
+        }
+
+        this.edited = this.edited.substring(0, start) + filler +
+                      this.edited.substring(end);
+    }
+
+    // regex must have global flag!
+    // markers === null         - erase nothing
+    // markers === []           - erase matched text
+    // markers === ["/*", "*/"] - erase, but mark beginning and end
+    editMatchedText(regex, style = "", markers = null) {
+
+        for (let match = regex.exec(this.edited);
+                 match !== null;
+                 match = regex.exec(this.edited)) {
+
+            const start = match.index;
+            const end   = match.index + match[0].length;
+
+            if (this.overlapsStyle(start, end)) {
+                continue;
+            }
+
+            if (style !== "") {
+                this.styles.push(new StyleRange(style, start, end));
+            }
+
+            if (markers !== null) {
+                this.eraseRange(start, end, markers);
+            }
+        }
+    }
+
+    // regex must have global flag!
+    // regex also requires indices flag when styling
+    // styles === null           - no styling (but no indices flag)
+    // styles[0], styles[1], ... - style for capture group 1, 2, etc.
+    // groups === [[], [], ...]  - results from each capture group
+    // groups === [null, []]     - results from only 2nd group
+    findCaptureGroups(regex, styles = null, groups = null) {
+
+        for (let groups = regex.exec(this.edited);
+                 groups !== null;
+                 groups = regex.exec(this.edited)) {
+
+            for (let i = 0; i + 1 < groups.length; i++) {
+
+                if (styles !== null && styles[i] !== "") {
+
+                    const start = groups.indices[i + 1][0];
+                    const end   = groups.indices[i + 1][1];
+
+                    const s = new StyleRange(styles[i], start, end);
+                    this.styles.push(s);
+                }
+            }
+        }
+    }
+}
