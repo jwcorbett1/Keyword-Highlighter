@@ -1,104 +1,132 @@
 
-class StyleRange {
+class Styling {
 
-    constructor(style, start, end) {
-
+    constructor(style, start, stop) {
         this.style = style;
         this.start = start;
-        this.end   = end;
+        this.stop  = stop;
     }
 }
 
 class StyleBuilder {
 
     constructor(string) {
-
-        this.string = string;
-        this.edited = string;
-        this.styles = [];
+        this.original = string;
+        this.edited   = string;
+        this.list     = [];
     }
 
-    overlapsStyle(start, end) {
+    addStyling(style, start, stop) {
 
-        for (let i = 0; i < this.styles.length; i++) {
+        for (let i = 0; i < this.list.length; i++) {
 
-            if (start < this.styles[i].end &&
-                this.styles[i].start < end) {
+            if (start < this.list[i].stop &&
+                this.list[i].start < stop) {
 
-                return true;
+                return;
             }
         }
 
-        return false;
+        this.list.push(new Styling(style, start, stop));
     }
 
-    // markers === []           - erase matched text
-    // markers === ["/*", "*/"] - erase, but mark beginning and end
-    eraseRange(start, end, markers = []) {
+    splitStyling(style, start, stop, regex) {
 
-        let count = end - start;
-        if (markers.length > 0) {
-            count -= markers[0].length + markers[1].length;
+        const segments = this.edited
+            .substring(start, stop)
+            .split(regex)
+            .filter(function(s) { return s.length > 0; });
+
+        stop = start;
+        for (let i = 0; i < segments.length; i++) {
+
+            start = this.edited.indexOf(segments[i], stop);
+            stop  = start + segments[i].length;
+
+            this.addStyling(style, start, stop);
         }
-
-        let filler = " ".repeat(count);
-        if (markers.length > 0) {
-            filler = markers[0] + filler + markers[1];
-        }
-
-        this.edited = this.edited.substring(0, start) + filler +
-                      this.edited.substring(end);
     }
 
-    // regex must have global flag!
-    // markers === null         - erase nothing
-    // markers === []           - erase matched text
-    // markers === ["/*", "*/"] - erase, but mark beginning and end
-    editMatchedText(regex, style = "", markers = null) {
+    eraseRange(start, stop, begin = "", end = "") {
+
+        this.edited =
+            this.edited.substring(0, start) +
+            begin +
+            " ".repeat(stop - start - begin.length - end.length) +
+            end +
+            this.edited.substring(stop);
+    }
+
+    updateMatchedText(regex, style = "",
+        split = null, begin = null, end = null) {
 
         for (let match = regex.exec(this.edited);
                  match !== null;
                  match = regex.exec(this.edited)) {
 
             const start = match.index;
-            const end   = match.index + match[0].length;
-
-            if (this.overlapsStyle(start, end)) {
-                continue;
-            }
+            const stop  = start + match[0].length;
 
             if (style !== "") {
-                this.styles.push(new StyleRange(style, start, end));
+
+                if (split === null) {
+                    this.addStyling(style, start, stop);
+                } else {
+                    this.splitStyling(style, start, stop, split);
+                }
             }
 
-            if (markers !== null) {
-                this.eraseRange(start, end, markers);
+            if (begin !== null) {
+                this.eraseRange(start, stop, begin, end);
             }
         }
     }
 
-    // regex must have global flag!
-    // regex also requires indices flag when styling
-    // styles === null           - no styling (but no indices flag)
-    // styles[0], styles[1], ... - style for capture group 1, 2, etc.
-    // groups === [[], [], ...]  - results from each capture group
-    // groups === [null, []]     - results from only 2nd group
+    addCaptureGroups(match, styles) {
+
+        for (let i = 0;
+                 i < styles.length && i + 1 < match.length;
+                 i++) {
+
+            if (styles[i] !== "") {
+
+                const start = match.index +
+                              match[0].indexOf(match[i + 1]);
+
+                this.addStyling(
+                    styles[i],
+                    start,
+                    start + match[i + 1].length);
+            }
+        }
+    }
+
+    listUniqueMatches(match, groups) {
+
+        for (let i = 0;
+                 i < groups.length && i + 1 < match.length;
+                 i++) {
+
+            if (groups[i] !== null &&
+                !groups[i].includes(match[i + 1])) {
+
+                groups[i].push(match[i + 1]);
+            }
+        }
+    }
+
     findCaptureGroups(regex, styles = null, groups = null) {
 
-        for (let groups = regex.exec(this.edited);
-                 groups !== null;
-                 groups = regex.exec(this.edited)) {
+        for (let match = regex.exec(this.edited);
+                 match !== null;
+                 match = regex.exec(this.edited)) {
 
-            for (let i = 0; i + 1 < groups.length; i++) {
+            if (styles !== null) {
+                this.addCaptureGroups(match, styles);
+            }
 
-                if (styles !== null && styles[i] !== "") {
-
-                    const start = groups.indices[i + 1][0];
-                    const end   = groups.indices[i + 1][1];
-
-                    const s = new StyleRange(styles[i], start, end);
-                    this.styles.push(s);
-                }
+            if (groups !== null) {
+                this.listUniqueMatches(match, groups);
             }
         }
     }
