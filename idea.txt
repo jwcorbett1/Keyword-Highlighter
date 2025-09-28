@@ -8,28 +8,51 @@ class Styling {
     }
 }
 
+// embed Styling data into text and return result
+function buildStyledHTML(text, styles) {
+
+    let html = text.substring(0, styles[0].start);
+    for (let i = 0; i < styles.length; i++) {
+
+        html += "<span class='" + styles[i].style + "'>" +
+                text.substring(styles[i].start, styles[i].stop) +
+                "</span>";
+
+        if (i + 1 < styles.length) {
+            html += text.substring(styles[i].stop,
+                                   styles[i + 1].start);
+        } else {
+            html += text.substring(styles[i].stop);
+        }
+    }
+
+    return html;
+}
+
 class StyleBuilder {
 
-    constructor(string) {
-        this.original = string;
-        this.edited   = string;
-        this.list     = [];
+    constructor(html) {
+        this.original = html;  // copy for creating finished HTML
+        this.edited   = html;  // original without "hidden" text
+        this.styling  = [];
     }
 
     addStyling(style, start, stop) {
 
-        for (let i = 0; i < this.list.length; i++) {
+        // check if start/stop overlaps existing styling
+        for (let i = 0; i < this.styling.length; i++) {
 
-            if (start < this.list[i].stop &&
-                this.list[i].start < stop) {
+            if (start < this.styling[i].stop &&
+                this.styling[i].start < stop) {
 
-                return;
+                return;  // overlap not allowed!
             }
         }
 
-        this.list.push(new Styling(style, start, stop));
+        this.styling.push(new Styling(style, start, stop));
     }
 
+    // add styling, but skip over regex matches
     splitStyling(style, start, stop, regex) {
 
         const segments = this.edited
@@ -37,9 +60,10 @@ class StyleBuilder {
             .split(regex)
             .filter(function(s) { return s.length > 0; });
 
-        stop = start;
+        stop = start;  // no previous match
         for (let i = 0; i < segments.length; i++) {
 
+            // find match after end of previous match
             start = this.edited.indexOf(segments[i], stop);
             stop  = start + segments[i].length;
 
@@ -47,18 +71,21 @@ class StyleBuilder {
         }
     }
 
-    eraseRange(start, stop, begin = "", end = "") {
+    // replace text with same number of filler characters
+    hideRange(start, stop, begin = "", end = "") {
 
         this.edited =
             this.edited.substring(0, start) +
-            begin +
+            begin +  // optional - marks beginning of deletion
             " ".repeat(stop - start - begin.length - end.length) +
-            end +
+            end +    // optional - marks end of deletion
             this.edited.substring(stop);
     }
 
+    // add styling to and/or hide regex matches at same time
+    // beginMark = "" and endMark = "" will fully hide matches
     updateMatchedText(regex, style = "",
-        split = null, begin = null, end = null) {
+        splitAt = null, beginMark = null, endMark = null) {
 
         for (let match = regex.exec(this.edited);
                  match !== null;
@@ -68,20 +95,21 @@ class StyleBuilder {
             const stop  = start + match[0].length;
 
             if (style !== "") {
-
-                if (split === null) {
+                if (splitAt === null) {
                     this.addStyling(style, start, stop);
                 } else {
-                    this.splitStyling(style, start, stop, split);
+                    this.splitStyling(style, start, stop, splitAt);
                 }
             }
 
-            if (begin !== null) {
-                this.eraseRange(start, stop, begin, end);
+            if (beginMark !== null) {
+                this.hideRange(start, stop, beginMark, endMark);
             }
         }
     }
 
+    // add styling to each capture group at same time
+    // styles = ["", "example"] only styles 2nd capture group
     addCaptureGroups(match, styles) {
 
         for (let i = 0;
@@ -101,7 +129,9 @@ class StyleBuilder {
         }
     }
 
-    listUniqueMatches(match, groups) {
+    // builds list of unique capture group results with each call
+    // groups = [null, [] ] only records 2nd capture group results
+    addUniqueCaptures(match, groups) {
 
         for (let i = 0;
                  i < groups.length && i + 1 < match.length;
@@ -115,6 +145,7 @@ class StyleBuilder {
         }
     }
 
+    // add styling to and/or build list of capture group matches
     findCaptureGroups(regex, styles = null, groups = null) {
 
         for (let match = regex.exec(this.edited);
@@ -126,8 +157,22 @@ class StyleBuilder {
             }
 
             if (groups !== null) {
-                this.listUniqueMatches(match, groups);
+                this.addUniqueCaptures(match, groups);
             }
         }
+    }
+
+    // embed current styling into original HTML and return result
+    getStyledHTML() {
+
+        if (this.styling.length === 0) {
+            return this.original;
+        }
+
+        // buildStyledHTML() requires array sorted by start
+        this.styling.sort(function(a, b) {
+            return a.start - b.start; });
+
+        return buildStyledHTML(this.original, this.styling);
     }
 }
