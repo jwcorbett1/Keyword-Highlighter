@@ -3,8 +3,8 @@ class Styling {
 
     constructor(style, start, stop) {
         this.style = style;
-        this.start = start;
-        this.stop  = stop;
+        this.start = start;  // first index to apply style
+        this.stop  = stop;   // index to stop applying style
     }
 }
 

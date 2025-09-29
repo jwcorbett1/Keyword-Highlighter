@@ -3,17 +3,20 @@
 <head>
 
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="viewport"
+          content="width=device-width, initial-scale=1.0">
 
     <title>Keyword Highlighter</title>
 
     <style>
 /* -------------------------------------------------------------------------- */
 
+/* font settings for all text and controls */
 body, input {
     font-family: "Courier New", Courier, monospace;
 }
 
+/* top-level flexbox */
 .viewPort {
     display:        flex;
     flex-direction: column;
@@ -24,9 +27,9 @@ body, input {
 }
 
 #editBox {
-    flex-grow:   1;
+    flex-grow:   1;     /* fill majority of viewport */
     white-space: preserve nowrap;
-    overflow:    auto;
+    overflow:    auto;  /* add scrollbars if/when needed */
     border:      0.1em solid black;
     outline:     none;
     margin:      0;
@@ -34,11 +37,12 @@ body, input {
 }
 
 .toolBar {
-    flex-grow: 0;
+    flex-grow: 0;  /* minimize footprint */
     margin:    0;
     padding:   0 0 0.7em;
 }
 
+/* invisible and hidden behind other controls */
 #filePicker {
     position: absolute;
     z-index:  -1;
@@ -49,16 +53,19 @@ body, input {
     width: 40em;
 }
 
-.keyword {
-    color: blue;
+/* -------------------------------------------------------------------------- */
+/* colors to use for each type of token */
+
+.comment {
+    color: green;
 }
 
 .literal {
     color: red;
 }
 
-.comment {
-    color: green;
+.keyword {
+    color: blue;
 }
 
 .function {
@@ -77,6 +84,7 @@ body, input {
     </style>
     <script>
 // -----------------------------------------------------------------------------
+// keywords divided up by handling needs
 
 const dataTypes = [
     "bool",
@@ -134,6 +142,187 @@ const keywords = [
 
 // -----------------------------------------------------------------------------
 
+// base-level data structure
+class Styling {
+
+    constructor(style, start, stop) {
+
+        this.style = style;
+        this.start = start;  // first index to apply style
+        this.stop  = stop;   // first index to stop applying style
+    }
+}
+
+// embed Styling data into text and return result
+function buildStyledHTML(text, styles) {
+
+    let html = text.substring(0, styles[0].start);
+    for (let i = 0; i < styles.length; i++) {
+
+        html += "<span class='" + styles[i].style + "'>" +
+                text.substring(styles[i].start, styles[i].stop) +
+                "</span>";
+
+        if (i + 1 < styles.length) {
+            html += text.substring(styles[i].stop, styles[i + 1].start);
+        } else {
+            html += text.substring(styles[i].stop);
+        }
+    }
+
+    return html;
+}
+
+// builder to apply styling step-by-step
+class StyleBuilder {
+
+    constructor(html) {
+
+        this.original = html;  // copy for creating finished HTML
+        this.edited   = html;  // original, but without "hidden" text
+        this.styling  = [];    // Styling objects
+    }
+
+    addStyling(style, start, stop) {
+
+        // check if start/stop overlaps existing styling
+        for (let i = 0; i < this.styling.length; i++) {
+
+            if (start < this.styling[i].stop &&
+                this.styling[i].start < stop) {
+
+                return;  // overlap not allowed!
+            }
+        }
+
+        this.styling.push(new Styling(style, start, stop));
+    }
+
+    // add styling, but skip over regex matches
+    splitStyling(style, start, stop, regex) {
+
+        const segments = this.edited
+            .substring(start, stop)
+            .split(regex)
+            .filter(function(s) { return s.length > 0; });
+
+        stop = start;  // no previous match
+        for (let i = 0; i < segments.length; i++) {
+
+            // find match after end of previous match
+            start = this.edited.indexOf(segments[i], stop);
+            stop  = start + segments[i].length;
+
+            this.addStyling(style, start, stop);
+        }
+    }
+
+    // replace text with same number of filler characters
+    hideRange(start, stop, begin = "", end = "") {
+
+        this.edited =
+            this.edited.substring(0, start) +
+            begin +  // optional - marks beginning of deletion
+            " ".repeat(stop - start - begin.length - end.length) +
+            end +    // optional - marks end of deletion
+            this.edited.substring(stop);
+    }
+
+    // add styling to and/or hide regex matches
+    // beginMark = "" and endMark = "" will fully hide matches
+    updateMatchedText(regex, style = "",
+        splitAt = null, beginMark = null, endMark = null) {
+
+        for (let match = regex.exec(this.edited);
+                 match !== null;
+                 match = regex.exec(this.edited)) {
+
+            const start = match.index;
+            const stop  = start + match[0].length;
+
+            if (style !== "") {
+                if (splitAt === null) {
+                    this.addStyling(style, start, stop);
+                } else {
+                    this.splitStyling(style, start, stop, splitAt);
+                }
+            }
+
+            if (beginMark !== null) {
+                this.hideRange(start, stop, beginMark, endMark);
+            }
+        }
+    }
+
+    // add styling to each capture group at same time
+    // styles = ["", "example"] only styles 2nd capture group
+    addCaptureGroups(match, styles) {
+
+        for (let i = 0;
+                 i < styles.length && i + 1 < match.length;
+                 i++) {
+
+            if (styles[i] !== "") {
+
+                const start = match.index +
+                              match[0].indexOf(match[i + 1]);
+
+                this.addStyling(
+                    styles[i],
+                    start,
+                    start + match[i + 1].length);
+            }
+        }
+    }
+
+    // builds list of unique capture group results with each call
+    // groups = [null, [] ] only records 2nd capture group results
+    addUniqueCaptures(match, groups) {
+
+        for (let i = 0;
+                 i < groups.length && i + 1 < match.length;
+                 i++) {
+
+            if (groups[i] !== null && !groups[i].includes(match[i + 1])) {
+
+                groups[i].push(match[i + 1]);
+            }
+        }
+    }
+
+    // add styling to and/or build list of capture group matches
+    findCaptureGroups(regex, styles = null, groups = null) {
+
+        for (let match = regex.exec(this.edited);
+                 match !== null;
+                 match = regex.exec(this.edited)) {
+
+            if (styles !== null) {
+                this.addCaptureGroups(match, styles);
+            }
+
+            if (groups !== null) {
+                this.addUniqueCaptures(match, groups);
+            }
+        }
+    }
+
+    // embed current styling into original HTML and return result
+    buildStyledHTML() {
+
+        if (this.styling.length === 0) {
+            return this.original;
+        }
+
+        // buildStyledHTML() requires array to be sorted by start index
+        this.styling.sort(function(a, b) { return a.start - b.start; });
+
+        return buildStyledHTML(this.original, this.styling);
+    }
+}
+
+// -----------------------------------------------------------------------------
+/*
 class StringToken {
 
     constructor(string, start, style) {
@@ -223,7 +412,7 @@ function ignoreAnnotations(tokens, annotations) {
     return styles;
 }
 
-function buildStyledHTML(string, tokens, annotations) {
+function old_buildStyledHTML(string, tokens, annotations) {
 
     const styles = ignoreAnnotations(tokens, annotations);
     if (styles.length < 1) {
@@ -456,25 +645,30 @@ function listDefinitions(tokens, keyword) {
 
     return definitions;
 }
-
+*/
 // -----------------------------------------------------------------------------
+// all regular expressions confined to this section
 
+// strip previously applied styles
 function unstyledFromStyled(html) {
 
-    return html.replace(/<span[^>]*>/g, "")
-               .replace(/<font[^>]*>/g, "")
-               .replace(/<\/span>/g, "")
-               .replace(/<\/font>/g, "");
+    return html
+        .replace(/<span[^>]*>/gi, "")
+        .replace(/<font[^>]*>/gi, "")  // added by some browsers
+        .replace(/<\/span>/gi,    "")
+        .replace(/<\/font>/gi,    "");
 }
 
+// convert HTML into plain text
 function textFromHTML(html) {
 
-    const text = unstyledFromStyled(html).replace(/<div>/gi,   "\n")
-                                         .replace(/<\/div>/gi, "")
-                                         .replace(/<br>/gi,    "")
-                                         .replace(/&lt;/g,     "<")
-                                         .replace(/&gt;/g,     ">");
+    const text = unstyledFromStyled(html)
+        .replace(/<div>/gi,        "\n")
+        .replace(/<\/div>|<br>/gi, "")
+        .replace(/&lt;/g,          "<")
+        .replace(/&gt;/g,          ">");
 
+    // first text element may or may not be inside a <div>
     if (text[0] == "\n") {
         return text.substring(1);
     } else {
@@ -482,11 +676,14 @@ function textFromHTML(html) {
     }
 }
 
+// convert plain text into unstyled HTML
 function htmlFromText(text) {
 
-    text = text.replace(/</g, "&lt;")
-               .replace(/>/g, "&gt;");
+    text = text
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;");
 
+    // if it might be a line break, it's a line break
     const lines = text.split(/\r*\n|\r/);
     if (lines.length < 2) {
         return text[0];
@@ -496,7 +693,7 @@ function htmlFromText(text) {
     for (let i = 0; i < lines.length; i++) {
 
         if (lines[i].length < 1) {
-            lines[i] = "<br>";
+            lines[i] = "<br>";  // required for empty lines
         }
         html += "<div>" + lines[i] + "</div>";
     }
@@ -504,6 +701,8 @@ function htmlFromText(text) {
     return html;
 }
 
+// saves and restores text caret after updating inner HTML
+// should probably be rewritten to count <div> tags or something
 function saveCaret(element, html) {
 
     const selection = window.getSelection();
@@ -530,7 +729,33 @@ function saveCaret(element, html) {
     selection.addRange(range);
 }
 
+// apply styling step-by-step and display for user
 function styleEditBox() {
+
+    const splitAcrossLines = /<\/?div>|<br>/i;
+
+    // initialize StyleBuilder object
+    const editBox = document.getElementById("editBox");
+    const html    = unstyledFromStyled(editBox.innerHTML);
+    const styler  = new StyleBuilder(html);
+
+    // color-code C-style comments
+    styler.updateMatchedText(
+        /\/\*[\s\S]*?\*\//g, "comment",
+        splitAcrossLines,  // handle multiple lines
+        "", "");           // hide from further examination
+
+    // color-code character literals and strings
+    styler.updateMatchedText(
+        /(['"])[\s\S]*?(?<!\\)(?:\1|(?:<\/div>)?<div>)/gi, "literal",
+        splitAcrossLines,
+        "", "");
+
+    // apply styling and update edit box
+    saveCaret(editBox, styler.buildStyledHTML());
+}
+
+function old_styleEditBox() {
 
     const editBox = document.getElementById("editBox");
     const html    = unstyledFromStyled(editBox.innerHTML);
@@ -558,59 +783,68 @@ function styleEditBox() {
     styleByList(dataTypes,   tokens, "keyword");
     styleByList(keywords,    tokens, "keyword");
 
-    saveCaret(editBox, buildStyledHTML(html, tokens, []));
+    saveCaret(editBox, old_buildStyledHTML(html, tokens, []));
 }
 
 // -----------------------------------------------------------------------------
 
-let editBoxDirty = false;
-let stylingTimer;
+let hasChanges = false;  // edit box dirty flag
+let stylingTimer;        // timer ID for debouncing
 
+// EVENT LISTENER - attached by initialize()
+// after no input for 2 seconds, update styles used in edit box
 function debounceStyling() {
 
-    editBoxDirty = true;
+    hasChanges = true;
 
+    // restart timer
     clearTimeout(stylingTimer);
     stylingTimer = setTimeout(styleEditBox, 2000);
 }
 
-function dropChanges() {
+function confirmDropChanges() {
 
-    return !editBoxDirty || confirm("You will lose any unsaved changes.");
+    return !hasChanges || confirm("You will lose any unsaved changes.");
 }
 
+// reset edit box to starting conditions
 function clearEditBox() {
 
-    if (!dropChanges()) {
+    if (!confirmDropChanges()) {
         return;
     }
 
     document.getElementById("editBox").innerHTML = "";
     document.getElementById("fileName").value    = "temp.txt";
-    editBoxDirty                                 = false;
+    hasChanges                                   = false;
 }
 
+// trigger hidden file picker control
 function pickFile() {
 
-    if (!dropChanges()) {
+    if (!confirmDropChanges()) {
         return;
     }
 
     document.getElementById("filePicker").click();
 }
 
+// EVENT LISTENER - attached by readFile()
+// convert file to HTML, load, and style
 function loadFile(text) {
 
     document.getElementById("editBox").innerHTML = htmlFromText(text);
 
     styleEditBox();
-    editBoxDirty = false;
+    hasChanges = false;
 }
 
+// EVENT LISTENER - attached by initialize()
+// read selected file and load into edit box
 function readFile() {
 
     if (this.files.length < 1) {
-        return;
+        return;  // file picker cancelled!
     }
 
     let fileName = this.files[0].name;
@@ -625,9 +859,10 @@ function readFile() {
     });
 
     reader.readAsText(this.files[0]);
-    this.value = "";
+    this.value = "";  // clear file picker
 }
 
+// package up file and simulate clicking download link
 function dispatchFile(name, type, content) {
 
     const file = new Blob([content], { type: type });
@@ -635,43 +870,47 @@ function dispatchFile(name, type, content) {
 
     const link    = document.createElement("a");
     link.href     = url;
-    link.download = name;
+    link.download = name;  // set file name
 
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
 
-    URL.revokeObjectURL(url);
+    URL.revokeObjectURL(url);  // clean up temp URL
 }
 
+// determine file name and official "type" of download
 function downloadFile() {
 
     let type = "text/plain";
     let name = document.getElementById("fileName").value;
-    if (name.indexOf(".") < 0) {
+    if (name.indexOf(".") < 0) {  // append default extension
         name += ".txt";
     }
 
     else if (name.at(-1) == ".") {
         name = name.substring(0, name.length - 1);
-        type = "application/octet-stream";
+        type = "application/octet-stream";  // prevent default extension
     }
 
     const editBox = document.getElementById("editBox");
     const content = textFromHTML(editBox.innerHTML);
-    dispatchFile(name, type, content);
-    editBoxDirty = false;
+    dispatchFile(name, type, content);  // package file and dispatch
+    hasChanges = false;
 }
 
 // -----------------------------------------------------------------------------
 
+// attach event listeners and prep edit box for user
 function initialize() {
 
-    document.getElementById("filePicker")
-            .addEventListener("change", readFile);
+    document
+        .getElementById("filePicker")
+        .addEventListener("change", readFile);
 
-    document.getElementById("editBox")
-            .addEventListener("input", debounceStyling);
+    document
+        .getElementById("editBox")
+        .addEventListener("input", debounceStyling);
 
     clearEditBox();
 }
@@ -689,10 +928,12 @@ function initialize() {
                    value="New File"
                    onclick="clearEditBox()">
 
+            <!-- invisible and hidden behind other controls -->
             <input type="file"
                    id="filePicker"
                    accept="text/plain">
 
+            <!-- triggers file picker above -->
             <input type="button"
                    value="Open File"
                    onclick="pickFile()">
@@ -702,10 +943,13 @@ function initialize() {
                    onclick="downloadFile()">
 
             <label for="fileName">Current File:</label>
-            <input type="text" id="fileName">
+            <input type="text"
+                   id="fileName">
 
         </div>
-        <div id="editBox" contenteditable="true" spellcheck="false"></div>
+        <div id="editBox"
+             contenteditable="true"
+             spellcheck="false"></div>
     </div>
 
 </body>
