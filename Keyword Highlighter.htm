@@ -68,6 +68,14 @@ body, input {
     color: blue;
 }
 
+.preprocessor {
+    color: gray;
+}
+
+.define {
+    color: purple;
+}
+
 .function {
     color: orange;
 }
@@ -76,17 +84,13 @@ body, input {
     color: cyan;
 }
 
-.definition {
-    color: purple;
-}
-
 /* -------------------------------------------------------------------------- */
     </style>
     <script>
 // -----------------------------------------------------------------------------
 // keywords divided up by handling needs
 
-const dataTypes = [
+const dataType = [
     "bool",
     "char",
     "double",
@@ -106,8 +110,7 @@ const userDefined = [
     "union"
 ];
 
-const keywords = [
-    "#define",
+const preprocessor = [
     "#elif",
     "#else",
     "#endif",
@@ -117,7 +120,10 @@ const keywords = [
     "#ifndef",
     "#include",
     "#pragma",
-    "#undef",
+    "#undef"
+];
+
+const keyword = [
     "auto",
     "break",
     "case",
@@ -649,6 +655,12 @@ function listDefinitions(tokens, keyword) {
 // -----------------------------------------------------------------------------
 // all regular expressions confined to this section
 
+// convert list of keywords into regular expression
+function regexFromList(list) {
+
+    return new RegExp("(?<![#\\w])(?:" + list.join("|") + ")\\b", "g");
+}
+
 // strip previously applied styles
 function unstyledFromStyled(html) {
 
@@ -741,15 +753,44 @@ function styleEditBox() {
 
     // color-code C-style comments
     styler.updateMatchedText(
-        /\/\*[\s\S]*?\*\//g, "comment",
+        /\/\*[\s\S]*?\*\//g,
+        "comment",
         splitAcrossLines,  // handle multiple lines
         "", "");           // hide from further examination
 
     // color-code character literals and strings
     styler.updateMatchedText(
-        /(['"])[\s\S]*?(?<!\\)(?:\1|(?:<\/div>)?<div>)/gi, "literal",
+        /(['"])[\s\S]*?(?<!\\<\/div>|[\s\S]{6}\\)(?:\1|<div>)/gi,
+        "literal",
         splitAcrossLines,
-        "", "");
+        "$", "$");  // mark removal with dollar signs at either end
+
+    // color-code numbers, keywords, and preprocessor commands
+    styler.updateMatchedText(/-?\.?\d[A-Za-z\d\-\.]*/g,   "literal");
+    styler.updateMatchedText(regexFromList(keyword),      "keyword");
+    styler.updateMatchedText(regexFromList(preprocessor), "preprocessor");
+
+    // color-code preprocessor defines
+    const styles = ["preprocessor"];
+    const groups = [null, [] ];
+    styler.findCaptureGroups(/(#define)\s+(\w+)/g, styles, groups);
+    styler.updateMatchedText(regexFromList(groups[1]), "define");
+
+    // color-code functions
+    groups[0] = [];
+    groups[1] = [];
+    styler.findCaptureGroups(
+        /([A-Za-z_]\w*)(?:\s|<\/?div>|<br>)*\(([^)]*)\)/g,
+        null,
+        groups);
+    styler.updateMatchedText(
+        regexFromList(groups[0]),
+        "function",
+        splitAcrossLines);
+    styler.updateMatchedText(
+        regexFromList(groups[1]),
+        "keyword",
+        splitAcrossLines);
 
     // apply styling and update edit box
     saveCaret(editBox, styler.buildStyledHTML());
@@ -777,11 +818,11 @@ function old_styleEditBox() {
     const definitions = listDefinitions(tokens, "#define");
 
     styleByList(functions,   tokens, "function");
-    styleByList(definitions, tokens, "definition");
+    styleByList(definitions, tokens, "define");
     styleByList(userDefined, tokens, "userDefined", 1);
     styleByList(userDefined, tokens, "keyword");
-    styleByList(dataTypes,   tokens, "keyword");
-    styleByList(keywords,    tokens, "keyword");
+    styleByList(dataType,    tokens, "keyword");
+    styleByList(keyword,     tokens, "keyword");
 
     saveCaret(editBox, old_buildStyledHTML(html, tokens, []));
 }
