@@ -110,6 +110,7 @@ const userDefined = [
     "union"
 ];
 
+// #define handled separately
 const preprocessor = [
     "#elif",
     "#else",
@@ -123,6 +124,7 @@ const preprocessor = [
     "#undef"
 ];
 
+// typedef handled separately
 const keyword = [
     "auto",
     "break",
@@ -141,7 +143,6 @@ const keyword = [
     "sizeof",
     "static",
     "switch",
-    "typedef",
     "volatile",
     "while"
 ];
@@ -160,9 +161,10 @@ class Styling {
 }
 
 // embed Styling data into text and return result
+// requires styles to be sorted by start index
 function buildStyledHTML(text, styles) {
 
-    let html = text.substring(0, styles[0].start);
+    let html = text.substring(0, styles[0].start);  // before any styling
     for (let i = 0; i < styles.length; i++) {
 
         html += "<span class='" + styles[i].style + "'>" +
@@ -172,12 +174,14 @@ function buildStyledHTML(text, styles) {
         if (i + 1 < styles.length) {
             html += text.substring(styles[i].stop, styles[i + 1].start);
         } else {
-            html += text.substring(styles[i].stop);
+            html += text.substring(styles[i].stop);  // until end of text
         }
     }
 
     return html;
 }
+
+// -----------------------------------------------------------------------------
 
 // builder to apply styling step-by-step
 class StyleBuilder {
@@ -185,8 +189,8 @@ class StyleBuilder {
     constructor(html) {
 
         this.original = html;  // copy for creating finished HTML
-        this.edited   = html;  // original, but without "hidden" text
-        this.styling  = [];    // Styling objects
+        this.edited   = html;  // also copy, but without "hidden" text
+        this.styling  = [];    // holds Styling objects
     }
 
     addStyling(style, start, stop) {
@@ -229,7 +233,7 @@ class StyleBuilder {
         this.edited =
             this.edited.substring(0, start) +
             begin +  // optional - marks beginning of deletion
-            " ".repeat(stop - start - begin.length - end.length) +
+            " ".repeat((stop - start) - (begin.length + end.length)) +
             end +    // optional - marks end of deletion
             this.edited.substring(stop);
     }
@@ -237,7 +241,7 @@ class StyleBuilder {
     // add styling to and/or hide regex matches
     // beginMark = "" and endMark = "" will fully hide matches
     updateMatchedText(regex, style = "",
-        splitAt = null, beginMark = null, endMark = null) {
+        splitRegex = null, beginMark = null, endMark = null) {
 
         for (let match = regex.exec(this.edited);
                  match !== null;
@@ -247,10 +251,10 @@ class StyleBuilder {
             const stop  = start + match[0].length;
 
             if (style !== "") {
-                if (splitAt === null) {
+                if (splitRegex === null) {
                     this.addStyling(style, start, stop);
                 } else {
-                    this.splitStyling(style, start, stop, splitAt);
+                    this.splitStyling(style, start, stop, splitRegex);
                 }
             }
 
@@ -653,11 +657,115 @@ function listDefinitions(tokens, keyword) {
 }
 */
 // -----------------------------------------------------------------------------
+/*
+
+find and erase whitespace/html
+find and erase comments
+find and erase character/string literals - end of line or line continuation
+
+find integer/floating-point literals
+find pre-processor commands
+find keywords
+find function/struct/enum/union definitions
+
+list pre-processor defines
+list functions and parameters
+list local variables
+list global variables
+list typedefs
+
+function findClosingDelimiter(string, opensAt, opener, closer) {
+
+    let closesAt = opensAt;
+    do {
+
+        closesAt = string.indexOf(closer, closesAt + closer.length);
+        if (closesAt < 0) {
+            closesAt = string.length;
+        }
+
+        opensAt = string.indexOf(opener, opensAt + opener.length);
+        if (opensAt < 0) {
+            opensAt = string.length;
+        }
+
+    } while (opensAt < closesAt);
+
+    return closesAt;
+}
+
+class CodeBlock {
+
+    constructor(opensAt, closesAt) {
+
+        this.opensAt    = opensAt;
+        this.closesAt   = closesAt;
+        this.name       = "";
+        this.parameters = [];
+    }
+
+    setParameters(parameters) {
+
+        const getParameter = /([A-Za-z_]\w*)\s*$/;
+
+        this.parameters = parameters.split(",");
+        let i = 0;
+        while (i < this.parameters.length) {
+
+            const groups = getParameter.exec(this.parameters[i]);
+            if (groups === null) {
+                this.parameters.splice(i, 1);
+                continue;
+            }
+
+            this.parameters[i] = groups[1];
+            i++;
+        }
+    }
+}
+
+function findCodeBlocks(string, keywords) {
+
+    const getDetails = /([A-Za-z_]\w*)(?:\s*\(([^\)]*)\))?\s*\{/g;
+
+    let   groups = getDetails.exec(string);
+    const blocks = [];
+
+    let closesAt;
+    for (let opensAt = string.indexOf("{");
+             opensAt !== -1;
+             opensAt = string.indexOf("{", closesAt + 1)) {
+
+        closesAt = findClosingDelimiter(string, opensAt, "{", "}");
+        blocks.push(new CodeBlock(opensAt, closesAt));
+
+        while (groups !== null &&
+               getDetails.lastIndex < blocks.at(-1).opensAt + 1) {
+            groups = getDetails.exec(string);
+        }
+
+        if (getDetails.lastIndex === blocks.at(-1).opensAt + 1 &&
+            !keywords.includes(groups[1])) {
+
+            blocks.at(-1).name = groups[1];
+            if (groups.length > 2) {
+                blocks.at(-1).setParameters(groups[2]);
+            }
+        }
+    }
+
+    return blocks;
+}
+
+*/
+// -----------------------------------------------------------------------------
 // all regular expressions confined to this section
 
-// convert list of keywords into regular expression
+// convert list of identifiers into a regular expression
 function regexFromList(list) {
 
+    // can't just use \b at beginning of regex
+    // must be able to match preprocessor directives
     return new RegExp("(?<![#\\w])(?:" + list.join("|") + ")\\b", "g");
 }
 
@@ -682,23 +790,23 @@ function textFromHTML(html) {
 
     // first text element may or may not be inside a <div>
     if (text[0] == "\n") {
-        return text.substring(1);
-    } else {
-        return text;
+        text = text.substring(1);  // chop off extra newline
     }
+
+    return text;
 }
 
 // convert plain text into unstyled HTML
 function htmlFromText(text) {
 
-    text = text
+    const cleanText = text
         .replace(/</g, "&lt;")
         .replace(/>/g, "&gt;");
 
     // if it might be a line break, it's a line break
-    const lines = text.split(/\r*\n|\r/);
+    const lines = cleanText.split(/\r*\n|\r/);
     if (lines.length < 2) {
-        return text[0];
+        return lines[0];
     }
 
     let html = "";
@@ -715,7 +823,7 @@ function htmlFromText(text) {
 
 // saves and restores text caret after updating inner HTML
 // should probably be rewritten to count <div> tags or something
-function saveCaret(element, html) {
+function preserveCaret(element, html) {
 
     const selection = window.getSelection();
     if (!selection || selection.rangeCount < 1) {
@@ -744,6 +852,7 @@ function saveCaret(element, html) {
 // apply styling step-by-step and display for user
 function styleEditBox() {
 
+    // regex to match HTML-encoded line breaks
     const splitAcrossLines = /<\/?div>|<br>/i;
 
     // initialize StyleBuilder object
@@ -753,47 +862,50 @@ function styleEditBox() {
 
     // color-code C-style comments
     styler.updateMatchedText(
-        /\/\*[\s\S]*?\*\//g,
-        "comment",
-        splitAcrossLines,  // handle multiple lines
+        /\/\*.*?\*\//g,    // regex to match against
+        "comment",         // which CSS style to apply
+        splitAcrossLines,  // ensure HTML tags are nested correctly
         "", "");           // hide from further examination
 
     // color-code character literals and strings
     styler.updateMatchedText(
-        /(['"])[\s\S]*?(?<!\\<\/div>|[\s\S]{6}\\)(?:\1|<div>)/gi,
+        /(['"]).*?(?<!\\<\/div>|.{6}\\)(?:\1|<div>)/gi,
         "literal",
         splitAcrossLines,
-        "$", "$");  // mark removal with dollar signs at either end
+        "$", "$");  // mark hidden text with dollar signs at either end
 
-    // color-code numbers, keywords, and preprocessor commands
-    styler.updateMatchedText(/-?\.?\d[A-Za-z\d\-\.]*/g,   "literal");
-    styler.updateMatchedText(regexFromList(keyword),      "keyword");
+    // color-code numbers and most preprocessor directives
+    styler.updateMatchedText(/-?\.?\d[a-z\d\-\.]*/gi,     "literal");
     styler.updateMatchedText(regexFromList(preprocessor), "preprocessor");
 
-    // color-code preprocessor defines
-    const styles = ["preprocessor"];
-    const groups = [null, [] ];
-    styler.findCaptureGroups(/(#define)\s+(\w+)/g, styles, groups);
+    // color-code #define directives
+    let groups = [null, [] ];  // only return 2nd capture group
+    styler.findCaptureGroups(
+        /(#define)\s+([A-Za-z_]\w*)/g,  // regex to match against
+        ["preprocessor"],               // style for 1st capture group
+        groups);
+
+    // color-code macros retrieved in previous step
     styler.updateMatchedText(regexFromList(groups[1]), "define");
 
-    // color-code functions
-    groups[0] = [];
-    groups[1] = [];
+    // color-code most keywords
+    styler.updateMatchedText(regexFromList(keyword), "keyword");
+
+    // find functions and their parameter lists
+    groups = [ [], [] ];  // return both capture groups
     styler.findCaptureGroups(
-        /([A-Za-z_]\w*)(?:\s|<\/?div>|<br>)*\(([^)]*)\)/g,
-        null,
+        /([a-z_]\w*)(?:\s|<\/?div>|<br>)*\((.*?)\)/gi,
+        null,     // styling applied in next steps
         groups);
+
+    // color-code function names
     styler.updateMatchedText(
         regexFromList(groups[0]),
         "function",
         splitAcrossLines);
-    styler.updateMatchedText(
-        regexFromList(groups[1]),
-        "keyword",
-        splitAcrossLines);
 
     // apply styling and update edit box
-    saveCaret(editBox, styler.buildStyledHTML());
+    preserveCaret(editBox, styler.buildStyledHTML());
 }
 
 function old_styleEditBox() {
@@ -824,7 +936,7 @@ function old_styleEditBox() {
     styleByList(dataType,    tokens, "keyword");
     styleByList(keyword,     tokens, "keyword");
 
-    saveCaret(editBox, old_buildStyledHTML(html, tokens, []));
+    preserveCaret(editBox, old_buildStyledHTML(html, tokens, []));
 }
 
 // -----------------------------------------------------------------------------
@@ -839,13 +951,14 @@ function debounceStyling() {
     hasChanges = true;
 
     // restart timer
-    clearTimeout(stylingTimer);
+    clearTimeout(stylingTimer);  // silently errors on invalid timer ID
     stylingTimer = setTimeout(styleEditBox, 2000);
 }
 
 function confirmDropChanges() {
 
-    return !hasChanges || confirm("You will lose any unsaved changes.");
+    return !hasChanges ||
+           confirm("You will lose any unsaved changes.");
 }
 
 // reset edit box to starting conditions
@@ -925,17 +1038,18 @@ function downloadFile() {
 
     let type = "text/plain";
     let name = document.getElementById("fileName").value;
-    if (name.indexOf(".") < 0) {  // append default extension
-        name += ".txt";
+    if (name.indexOf(".") < 0) {
+        name += ".txt";  // append default extension
     }
 
     else if (name.at(-1) == ".") {
-        name = name.substring(0, name.length - 1);
+        name = name.substring(0, name.length - 1);  // chop off period
         type = "application/octet-stream";  // prevent default extension
     }
 
     const editBox = document.getElementById("editBox");
     const content = textFromHTML(editBox.innerHTML);
+
     dispatchFile(name, type, content);  // package file and dispatch
     hasChanges = false;
 }
