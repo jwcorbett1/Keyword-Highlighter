@@ -72,7 +72,7 @@ body, input {
     color: gray;
 }
 
-.define {
+.macro {
     color: purple;
 }
 
@@ -149,6 +149,27 @@ const keyword = [
 
 // -----------------------------------------------------------------------------
 
+// find closing match for given pair of symbols
+function findClosingDelimiter(text, opensAt, opener, closer) {
+
+    let closesAt = opensAt;
+    do {
+
+        closesAt = text.indexOf(closer, closesAt + closer.length);
+        if (closesAt < 0) {
+            closesAt = text.length;
+        }
+
+        opensAt = text.indexOf(opener, opensAt + opener.length);
+        if (opensAt < 0) {
+            opensAt = text.length;
+        }
+
+    } while (opensAt < closesAt);
+
+    return closesAt;
+}
+
 // base-level data structure
 class Styling {
 
@@ -188,9 +209,29 @@ class StyleBuilder {
 
     constructor(html) {
 
-        this.original = html;  // copy for creating finished HTML
-        this.edited   = html;  // also copy, but without "hidden" text
+        this.original = html;  // copy for creating styled HTML
+        this.edited   = html;  // copy without "hidden" text
         this.styling  = [];    // holds Styling objects
+
+        // search range for updateMatchedText() and findCaptureGroups()
+        this.startAt  = 0;            // first index to start searching
+        this.stopAt   = html.length;  // first index to stop searching
+    }
+
+    // ---------------------------------
+
+    // search only part of edited string
+    setScope(startAt, stopAt) {
+
+        this.startAt = startAt;
+        this.stopAt  = stopAt;
+    }
+
+    // search entire edited string
+    clearScope() {
+
+        this.startAt = 0;
+        this.stopAt  = this.original.length;
     }
 
     addStyling(style, start, stop) {
@@ -207,6 +248,15 @@ class StyleBuilder {
 
         this.styling.push(new Styling(style, start, stop));
     }
+
+    // remove previously added styling from internal array
+    dropStyling(style) {
+
+        this.styling = this.styling
+            .filter(function(s) { return s.style !== style; });
+    }
+
+    // ---------------------------------
 
     // add styling, but skip over regex matches
     splitStyling(style, start, stop, regex) {
@@ -240,8 +290,11 @@ class StyleBuilder {
 
     // add styling to and/or hide regex matches
     // beginMark = "" and endMark = "" will fully hide matches
+    // only searches between this.startAt and this.stopAt
     updateMatchedText(regex, style = "",
         splitRegex = null, beginMark = null, endMark = null) {
+
+        regex.lastIndex = this.startAt;
 
         for (let match = regex.exec(this.edited);
                  match !== null;
@@ -249,6 +302,10 @@ class StyleBuilder {
 
             const start = match.index;
             const stop  = start + match[0].length;
+
+            if (stop > this.stopAt) {
+                break;
+            }
 
             if (style !== "") {
                 if (splitRegex === null) {
@@ -263,6 +320,8 @@ class StyleBuilder {
             }
         }
     }
+
+    // ---------------------------------
 
     // add styling to each capture group at same time
     // styles = ["", "example"] only styles 2nd capture group
@@ -301,10 +360,14 @@ class StyleBuilder {
     }
 
     // add styling to and/or build list of capture group matches
+    // only searches between this.startAt and this.stopAt
     findCaptureGroups(regex, styles = null, groups = null) {
 
+        regex.lastIndex = this.startAt;
+
         for (let match = regex.exec(this.edited);
-                 match !== null;
+                 match !== null &&
+                 match.index + match[0].length <= this.stopAt;
                  match = regex.exec(this.edited)) {
 
             if (styles !== null) {
@@ -316,6 +379,8 @@ class StyleBuilder {
             }
         }
     }
+
+    // ---------------------------------
 
     // embed current styling into original HTML and return result
     buildStyledHTML() {
@@ -674,19 +739,19 @@ list local variables
 list global variables
 list typedefs
 
-function findClosingDelimiter(string, opensAt, opener, closer) {
+function findClosingDelimiter(text, opensAt, opener, closer) {
 
     let closesAt = opensAt;
     do {
 
-        closesAt = string.indexOf(closer, closesAt + closer.length);
+        closesAt = text.indexOf(closer, closesAt + closer.length);
         if (closesAt < 0) {
-            closesAt = string.length;
+            closesAt = text.length;
         }
 
-        opensAt = string.indexOf(opener, opensAt + opener.length);
+        opensAt = text.indexOf(opener, opensAt + opener.length);
         if (opensAt < 0) {
-            opensAt = string.length;
+            opensAt = text.length;
         }
 
     } while (opensAt < closesAt);
@@ -849,23 +914,14 @@ function preserveCaret(element, html) {
     selection.addRange(range);
 }
 
-// apply styling step-by-step and display for user
-function styleEditBox() {
-
-    // regex to match HTML-encoded line breaks
-    const splitAcrossLines = /<\/?div>|<br>/i;
-
-    // initialize StyleBuilder object
-    const editBox = document.getElementById("editBox");
-    const html    = unstyledFromStyled(editBox.innerHTML);
-    const styler  = new StyleBuilder(html);
+function styleCommentsAndLiterals(styler, splitAcrossLines) {
 
     // color-code C-style comments
     styler.updateMatchedText(
         /\/\*.*?\*\//g,    // regex to match against
         "comment",         // which CSS style to apply
         splitAcrossLines,  // ensure HTML tags are nested correctly
-        "", "");           // hide from further examination
+        "", "");           // hide text from further examination
 
     // color-code character literals and strings
     styler.updateMatchedText(
@@ -874,35 +930,65 @@ function styleEditBox() {
         splitAcrossLines,
         "$", "$");  // mark hidden text with dollar signs at either end
 
-    // color-code numbers and most preprocessor directives
-    styler.updateMatchedText(/-?\.?\d[a-z\d\-\.]*/gi,     "literal");
-    styler.updateMatchedText(regexFromList(preprocessor), "preprocessor");
+    // color-code numbers
+    styler.updateMatchedText(/-?\.?\d[a-z\d\-\.]*/gi, "literal");
+}
 
-    // color-code #define directives
-    let groups = [null, [] ];  // only return 2nd capture group
+function stylePreprocessorDirectives(styler) {
+
+    // color-code most preprocessor directives
+    styler.updateMatchedText(
+        regexFromList(preprocessor),  // build regex from list
+        "preprocessor");
+
+    // color-code "#define" directives
+    const groups = [null, [] ];  // only return 2nd capture group
     styler.findCaptureGroups(
-        /(#define)\s+([A-Za-z_]\w*)/g,  // regex to match against
-        ["preprocessor"],               // style for 1st capture group
+        /(#define)\s+([A-Za-z_]\w*)/g,
+        ["preprocessor"],  // style for 1st capture group
         groups);
 
     // color-code macros retrieved in previous step
-    styler.updateMatchedText(regexFromList(groups[1]), "define");
+    styler.updateMatchedText(
+        regexFromList(groups[1]),  // build regex from list
+        "macro",
+        null,       // macros are all single tokens
+        "$", "$");  // mark hidden text with dollar signs at either end
+}
+
+// apply styling step-by-step and display for user
+function styleEditBox() {
+
+    // matches HTML-encoded line breaks
+    const splitAcrossLines = /<\/?div>|<br>/i;
+
+    const editBox = document.getElementById("editBox");
+    const html    = unstyledFromStyled(editBox.innerHTML);
+    const styler  = new StyleBuilder(html);
+
+    styleCommentsAndLiterals(styler, splitAcrossLines);
+    stylePreprocessorDirectives(styler);
 
     // color-code most keywords
-    styler.updateMatchedText(regexFromList(keyword), "keyword");
+    styler.updateMatchedText(
+        regexFromList(keyword),
+        "keyword",
+        null,       // keywords are all single tokens
+        "$", "$");  // mark hidden text with dollar signs at either end
 
     // find functions and their parameter lists
-    groups = [ [], [] ];  // return both capture groups
+    const groups = [ [], [] ];  // return both capture groups
     styler.findCaptureGroups(
         /([a-z_]\w*)(?:\s|<\/?div>|<br>)*\((.*?)\)/gi,
-        null,     // styling applied in next steps
+        ["", "parameters"],  // temporary style for 2nd capture group
         groups);
 
     // color-code function names
     styler.updateMatchedText(
         regexFromList(groups[0]),
-        "function",
-        splitAcrossLines);
+        "function");
+
+    styler.dropStyling("parameters");
 
     // apply styling and update edit box
     preserveCaret(editBox, styler.buildStyledHTML());
