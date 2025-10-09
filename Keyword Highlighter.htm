@@ -80,6 +80,10 @@ body, input {
     color: orange;
 }
 
+.variable {
+    color: yellow;
+}
+
 .userDefined {
     color: cyan;
 }
@@ -149,27 +153,6 @@ const keyword = [
 
 // -----------------------------------------------------------------------------
 
-// find closing match for given pair of symbols
-function findClosingDelimiter(text, opensAt, opener, closer) {
-
-    let closesAt = opensAt;
-    do {
-
-        closesAt = text.indexOf(closer, closesAt + closer.length);
-        if (closesAt < 0) {
-            closesAt = text.length;
-        }
-
-        opensAt = text.indexOf(opener, opensAt + opener.length);
-        if (opensAt < 0) {
-            opensAt = text.length;
-        }
-
-    } while (opensAt < closesAt);
-
-    return closesAt;
-}
-
 // base-level data structure
 class Styling {
 
@@ -213,26 +196,28 @@ class StyleBuilder {
         this.edited   = html;  // copy without "hidden" text
         this.styling  = [];    // holds Styling objects
 
-        // search range for updateMatchedText() and findCaptureGroups()
+        // range to use for regex searches
         this.startAt  = 0;            // first index to start searching
         this.stopAt   = html.length;  // first index to stop searching
     }
 
     // ---------------------------------
 
-    // search only part of edited string
+    // in future, search only part of edited string
     setScope(startAt, stopAt) {
 
         this.startAt = startAt;
         this.stopAt  = stopAt;
     }
 
-    // search entire edited string
+    // in future, search entire edited string
     clearScope() {
 
         this.startAt = 0;
         this.stopAt  = this.original.length;
     }
+
+    // ---------------------------------
 
     addStyling(style, start, stop) {
 
@@ -249,8 +234,8 @@ class StyleBuilder {
         this.styling.push(new Styling(style, start, stop));
     }
 
-    // remove previously added styling from internal array
-    dropStyling(style) {
+    // remove all Styling objects with this style
+    removeStyling(style) {
 
         this.styling = this.styling
             .filter(function(s) { return s.style !== style; });
@@ -826,14 +811,6 @@ function findCodeBlocks(string, keywords) {
 // -----------------------------------------------------------------------------
 // all regular expressions confined to this section
 
-// convert list of identifiers into a regular expression
-function regexFromList(list) {
-
-    // can't just use \b at beginning of regex
-    // must be able to match preprocessor directives
-    return new RegExp("(?<![#\\w])(?:" + list.join("|") + ")\\b", "g");
-}
-
 // strip previously applied styles
 function unstyledFromStyled(html) {
 
@@ -847,7 +824,7 @@ function unstyledFromStyled(html) {
 // convert HTML into plain text
 function textFromHTML(html) {
 
-    const text = unstyledFromStyled(html)
+    let text = unstyledFromStyled(html)
         .replace(/<div>/gi,        "\n")
         .replace(/<\/div>|<br>/gi, "")
         .replace(/&lt;/g,          "<")
@@ -886,6 +863,156 @@ function htmlFromText(text) {
     return html;
 }
 
+// -------------------------------------
+
+function styleCommentsAndLiterals(styler, splitAcrossLines) {
+
+    // color-code C-style comments
+    styler.updateMatchedText(
+        /\/\*.*?\*\//g,    // regex to match against
+        "comment",         // which CSS style to apply
+        splitAcrossLines,  // ensure HTML tags are nested correctly
+        "", "");           // hide text from further examination
+
+    // color-code character literals and strings
+    styler.updateMatchedText(
+        /(['"]).*?(?<!\\<\/div>|.{6}\\)(?:\1|<div>)/gi,
+        "literal",
+        splitAcrossLines,
+        "$", "$");  // mark hidden text with dollar signs at either end
+
+    // color-code numbers
+    styler.updateMatchedText(/-?\.?\d[a-z\d\-\.]*/gi, "literal");
+}
+
+// -------------------------------------
+
+// convert list of identifiers into a regular expression
+function regexFromList(list) {
+
+    // must work for preprocessor directives
+    return new RegExp("(?<![#\\w])(?:" + list.join("|") + ")\\b", "g");
+}
+
+function stylePreprocessorDirectives(styler) {
+
+    // color-code most preprocessor directives
+    styler.updateMatchedText(
+        regexFromList(preprocessor),  // build regex from list
+        "preprocessor");
+
+    // color-code "#define" directives
+    const groups = [null, [] ];  // only return 2nd capture group
+    styler.findCaptureGroups(
+        /(#define)\s+([A-Za-z_]\w*)/g,
+        ["preprocessor"],  // style for 1st capture group
+        groups);
+
+    // color-code any macros retrieved in previous step
+    if (groups[1].length > 0) {
+
+        styler.updateMatchedText(
+            regexFromList(groups[1]),  // build regex from list
+            "macro",
+            null,       // macros are all single tokens
+            "$", "$");  // mark hidden text with dollar signs
+    }
+}
+
+// -------------------------------------
+
+// find closing match for given pair of symbols
+function findClosingDelimiter(text, opensAt, opener, closer) {
+
+    let closesAt = opensAt;
+    do {
+
+        // find possible match
+        closesAt = text.indexOf(closer, closesAt + closer.length);
+        if (closesAt < 0) {
+            closesAt = text.length;
+        }
+
+        // find next opener
+        opensAt = text.indexOf(opener, opensAt + opener.length);
+        if (opensAt < 0) {
+            opensAt = text.length;
+        }
+
+    // keep looking until next opener is after current closer
+    // don't use <= because potentially causes infinite loop
+    } while (opensAt < closesAt);
+
+    return closesAt;
+}
+
+function styleLocalVariables(styler, parameters) {
+
+    // check for function body
+    const text = styler.edited.substring(parameters.stop);
+    if (text.search(/\)(?:\s|<\/?div>|<br>)*\{/i) !== 0) {
+        return;
+    }
+
+    // scope down to just parameter list
+    styler.setScope(parameters.start, parameters.stop + 1);
+
+    // find parameter names
+    const groups = [ [] ];  // return 1st (and only) capture group
+    styler.findCaptureGroups(
+        /\b(\w+)(?:\s|<\/?div>|<br>)*(?:,|\))/gi,
+        ["variable"],  // style for names in parameter list
+        groups);
+
+    // change scope to function body
+    const opensAt  = text.indexOf("{");
+    const closesAt = findClosingDelimiter(text, opensAt, "{", "}");
+    styler.setScope(opensAt + 1, closesAt);
+
+    // color-code parameter names
+    if (groups[0].length > 0) {
+
+        styler.updateMatchedText(
+            regexFromList(groups[0]),
+            "variable");
+    }
+
+    styler.clearScope();
+}
+
+function styleFunctions(styler) {
+
+    // find functions and their parameter lists
+    const groups = [ [], [] ];           // return both capture groups
+    const styles = [ "", "parameters"];  // temp style for 2nd group
+    styler.findCaptureGroups(
+        /([a-z_]\w*)(?:\s|<\/?div>|<br>)*\((.*?)\)/gi,
+        styles,
+        groups);
+
+    // color-code function names
+    if (groups[0].length > 0) {
+
+        styler.updateMatchedText(
+            regexFromList(groups[0]),
+            "function");
+    }
+
+    // extract parameter list Styling objects
+    const parameters = styler.styling
+        .filter(function(s) { return s.style === styles[1]; });
+
+    // remove temporary style
+    styler.removeStyling(styles[1]);
+
+    // find and color-code variable names within each function
+    for (let i = 0; i < parameters.length; i++) {
+        styleLocalVariables(styler, parameters[i]);
+    }
+}
+
+// -------------------------------------
+
 // saves and restores text caret after updating inner HTML
 // should probably be rewritten to count <div> tags or something
 function preserveCaret(element, html) {
@@ -914,48 +1041,6 @@ function preserveCaret(element, html) {
     selection.addRange(range);
 }
 
-function styleCommentsAndLiterals(styler, splitAcrossLines) {
-
-    // color-code C-style comments
-    styler.updateMatchedText(
-        /\/\*.*?\*\//g,    // regex to match against
-        "comment",         // which CSS style to apply
-        splitAcrossLines,  // ensure HTML tags are nested correctly
-        "", "");           // hide text from further examination
-
-    // color-code character literals and strings
-    styler.updateMatchedText(
-        /(['"]).*?(?<!\\<\/div>|.{6}\\)(?:\1|<div>)/gi,
-        "literal",
-        splitAcrossLines,
-        "$", "$");  // mark hidden text with dollar signs at either end
-
-    // color-code numbers
-    styler.updateMatchedText(/-?\.?\d[a-z\d\-\.]*/gi, "literal");
-}
-
-function stylePreprocessorDirectives(styler) {
-
-    // color-code most preprocessor directives
-    styler.updateMatchedText(
-        regexFromList(preprocessor),  // build regex from list
-        "preprocessor");
-
-    // color-code "#define" directives
-    const groups = [null, [] ];  // only return 2nd capture group
-    styler.findCaptureGroups(
-        /(#define)\s+([A-Za-z_]\w*)/g,
-        ["preprocessor"],  // style for 1st capture group
-        groups);
-
-    // color-code macros retrieved in previous step
-    styler.updateMatchedText(
-        regexFromList(groups[1]),  // build regex from list
-        "macro",
-        null,       // macros are all single tokens
-        "$", "$");  // mark hidden text with dollar signs at either end
-}
-
 // apply styling step-by-step and display for user
 function styleEditBox() {
 
@@ -976,59 +1061,18 @@ function styleEditBox() {
         null,       // keywords are all single tokens
         "$", "$");  // mark hidden text with dollar signs at either end
 
-    // find functions and their parameter lists
-    const groups = [ [], [] ];  // return both capture groups
-    styler.findCaptureGroups(
-        /([a-z_]\w*)(?:\s|<\/?div>|<br>)*\((.*?)\)/gi,
-        ["", "parameters"],  // temporary style for 2nd capture group
-        groups);
-
-    // color-code function names
-    styler.updateMatchedText(
-        regexFromList(groups[0]),
-        "function");
-
-    styler.dropStyling("parameters");
+    styleFunctions(styler);
 
     // apply styling and update edit box
     preserveCaret(editBox, styler.buildStyledHTML());
-}
-
-function old_styleEditBox() {
-
-    const editBox = document.getElementById("editBox");
-    const html    = unstyledFromStyled(editBox.innerHTML);
-    const tokens  = tokenizeString(html, 0, html.length,
-        /[^\w#.-]+/, validateSegment, "");
-
-    styleByDelimiters(html, ["/*", "*/"], tokens, "comment");
-    styleByDelimiters(html, ["\'", "\'"], tokens, "literal");
-    styleByDelimiters(html, ["\"", "\""], tokens, "literal");
-
-    styleByRegex(/^-?\.?\d/, tokens, "literal");
-
-    const topLevel = extractTopLevel(
-        html,   ["{", "}"],
-        tokens, ["comment", "literal"]);
-
-    const isFunction  = /\([^\)]*\)[\s|<\/?div>|<br>]*[\{|;]/;
-    const functions   = listFunctions(topLevel, isFunction, tokens);
-    const definitions = listDefinitions(tokens, "#define");
-
-    styleByList(functions,   tokens, "function");
-    styleByList(definitions, tokens, "define");
-    styleByList(userDefined, tokens, "userDefined", 1);
-    styleByList(userDefined, tokens, "keyword");
-    styleByList(dataType,    tokens, "keyword");
-    styleByList(keyword,     tokens, "keyword");
-
-    preserveCaret(editBox, old_buildStyledHTML(html, tokens, []));
 }
 
 // -----------------------------------------------------------------------------
 
 let hasChanges = false;  // edit box dirty flag
 let stylingTimer;        // timer ID for debouncing
+
+// -------------------------------------
 
 // EVENT LISTENER - attached by initialize()
 // after no input for 2 seconds, update styles used in edit box
@@ -1058,6 +1102,8 @@ function clearEditBox() {
     document.getElementById("fileName").value    = "temp.txt";
     hasChanges                                   = false;
 }
+
+// -------------------------------------
 
 // trigger hidden file picker control
 function pickFile() {
@@ -1102,6 +1148,8 @@ function readFile() {
     this.value = "";  // clear file picker
 }
 
+// -------------------------------------
+
 // package up file and simulate clicking download link
 function dispatchFile(name, type, content) {
 
@@ -1140,7 +1188,7 @@ function downloadFile() {
     hasChanges = false;
 }
 
-// -----------------------------------------------------------------------------
+// -------------------------------------
 
 // attach event listeners and prep edit box for user
 function initialize() {
