@@ -94,26 +94,6 @@ body, input {
 // -----------------------------------------------------------------------------
 // keywords divided up by handling needs
 
-const dataType = [
-    "bool",
-    "char",
-    "double",
-    "float",
-    "int",
-    "long",
-    "short",
-    "signed",
-    "unsigned",
-    "void",
-    "wchar_t"
-];
-
-const userDefined = [
-    "enum",
-    "struct",
-    "union"
-];
-
 // #define handled separately
 const preprocessor = [
     "#elif",
@@ -151,6 +131,26 @@ const keyword = [
     "while"
 ];
 
+const dataType = [
+    "bool",
+    "char",
+    "double",
+    "float",
+    "int",
+    "long",
+    "short",
+    "signed",
+    "unsigned",
+    "void",
+    "wchar_t"
+];
+
+const composite = [
+    "enum",
+    "struct",
+    "union"
+];
+
 // -----------------------------------------------------------------------------
 
 // base-level data structure
@@ -164,9 +164,26 @@ class Styling {
     }
 }
 
+// return index of Styling data immediately before a position
+function findLastIndexBefore(styles, index) {
+
+    if (styles.length === 0 || styles[0].stop > index) {
+        return -1;
+    }
+
+    let i = 0;
+    while (i + 1 < styles.length && styles[i + 1].stop <= index) {
+        i++;
+    }
+
+    return i;
+}
+
 // embed Styling data into text and return result
-// requires styles to be sorted by start index
 function buildStyledHTML(text, styles) {
+
+    // sort array by start index
+    styles.sort(function(a, b) { return a.start - b.start; });
 
     let html = text.substring(0, styles[0].start);  // before any styling
     for (let i = 0; i < styles.length; i++) {
@@ -374,9 +391,6 @@ class StyleBuilder {
             return this.original;
         }
 
-        // buildStyledHTML() requires array to be sorted by start index
-        this.styling.sort(function(a, b) { return a.start - b.start; });
-
         return buildStyledHTML(this.original, this.styling);
     }
 }
@@ -482,28 +496,79 @@ function findCodeBlocks(string, keywords) {
     return blocks;
 }
 
+while top level
+    check each function tag
+    scope to parameter list
+    get list of parameter names
+    if immediately before function body
+        *scope to function body
+        *get list of local variables
+        merge with list of parameter names
+        scope to parameter list + function body
+    color-code local variables
+
 */
 // -----------------------------------------------------------------------------
 // all regular expressions confined to this section
+
+// matches HTML-encoded line breaks
+const splitAcrossLines = /<\/?div>|<br>/;
+
+// -------------------------------------
+
+// convert list of identifiers into a regular expression
+function regexFromList(list) {
+
+    // must work for preprocessor directives
+    return new RegExp("(?<![#\\w])(?:" + list.join("|") + ")\\b", "g");
+}
+
+// build a regular expression which matches variable names
+// passing "typedef" as trigger builds regex for typedefs
+// can pass multiple delimiter characters like "[;=]"
+function regexForVariables(trigger, delimiter = ";") {
+
+    let triggerOn = trigger;  // assume trigger is string
+    if (Array.isArray(trigger)) {
+
+        // construct list of known data types
+        triggerOn = dataType.join("|");
+        if (trigger.length > 0) {
+            triggerOn += "|" + trigger.join("|");  // add triggers
+        }
+
+        // wrap list as non-capturing group
+        triggerOn = "(?:" + triggerOn + ")";
+    }
+
+    // match valid variable name, ignoring whitespace and modifiers
+    return new RegExp(
+        triggerOn                 +  // starts with triggering match
+        "[^()]*?([A-Za-z_]\\w*)"  +  // capture last token of match
+        "(?:\\s|<\\/?div>|<br>)*" +  // possible whitespace after token
+        delimiter, "g");             // match ends with delimiter
+}
+
+// -------------------------------------
 
 // strip previously applied styles
 function unstyledFromStyled(html) {
 
     return html
-        .replace(/<span[^>]*>/gi, "")
-        .replace(/<font[^>]*>/gi, "")  // added by some browsers
-        .replace(/<\/span>/gi,    "")
-        .replace(/<\/font>/gi,    "");
+        .replace(/<span[^>]*>/g, "")
+        .replace(/<font[^>]*>/g, "")  // added by some browsers
+        .replace(/<\/span>/g,    "")
+        .replace(/<\/font>/g,    "");
 }
 
 // convert HTML into plain text
 function textFromHTML(html) {
 
     let text = unstyledFromStyled(html)
-        .replace(/<div>/gi,        "\n")
-        .replace(/<\/div>|<br>/gi, "")
-        .replace(/&lt;/g,          "<")
-        .replace(/&gt;/g,          ">");
+        .replace(/<div>/g,        "\n")
+        .replace(/<\/div>|<br>/g, "")
+        .replace(/&lt;/g,         "<")
+        .replace(/&gt;/g,         ">");
 
     // first text element may or may not be inside a <div>
     if (text[0] == "\n") {
@@ -540,7 +605,7 @@ function htmlFromText(text) {
 
 // -------------------------------------
 
-function styleCommentsAndLiterals(styler, splitAcrossLines) {
+function styleCommentsAndLiterals(styler) {
 
     // color-code C-style comments
     styler.updateMatchedText(
@@ -551,23 +616,16 @@ function styleCommentsAndLiterals(styler, splitAcrossLines) {
 
     // color-code character literals and strings
     styler.updateMatchedText(
-        /(['"]).*?(?<!\\<\/div>|.{6}\\)(?:\1|<div>)/gi,
+        /(['"]).*?(?<!\\<\/div>|.{6}\\)(?:\1|<div>)/g,
         "literal",
         splitAcrossLines,
         "$", "$");  // mark hidden text with dollar signs at either end
 
     // color-code numbers
-    styler.updateMatchedText(/-?\.?\d[a-z\d\-\.]*/gi, "literal");
+    styler.updateMatchedText(/-?\.?\d[A-Za-z\d\-\.]*/g, "literal");
 }
 
 // -------------------------------------
-
-// convert list of identifiers into a regular expression
-function regexFromList(list) {
-
-    // must work for preprocessor directives
-    return new RegExp("(?<![#\\w])(?:" + list.join("|") + ")\\b", "g");
-}
 
 function stylePreprocessorDirectives(styler) {
 
@@ -596,6 +654,31 @@ function stylePreprocessorDirectives(styler) {
 
 // -------------------------------------
 
+function styleKeywords(styler) {
+
+    // color-code most keywords
+    styler.updateMatchedText(
+        regexFromList(keyword),
+        "keyword",
+        null,       // keywords are all single tokens
+        "$", "$");  // mark hidden text with dollar signs at either end
+
+    // color-code data type keywords
+    styler.updateMatchedText(regexFromList(dataType), "keyword");
+
+    // matches struct/enum/union names (also captures matched keyword)
+    const captureComposites = new RegExp(
+        "(" + composite.join("|") + ")" +  // keywords to match
+        "(?:\\s|<\\/?div>|<br>)+" +        // whitespace
+        "([A-Za-z_]\\w*)", "g");           // token to capture
+
+    // color-code composite data types
+    const styles = ["keyword", "userDefined"];
+    styler.findCaptureGroups(captureComposites, styles);
+}
+
+// -------------------------------------
+
 // find closing match for given pair of symbols
 function findClosingDelimiter(text, opensAt, opener, closer) {
 
@@ -607,6 +690,7 @@ function findClosingDelimiter(text, opensAt, opener, closer) {
             closesAt = text.length;
         }
 
+        // overwrite passed-in value
         opensAt = text.indexOf(opener, opensAt + opener.length);
         if (opensAt < 0) {
             opensAt = text.length;
@@ -622,7 +706,7 @@ function styleLocalVariables(styler, parameters) {
 
     // confirm has function body
     const text = styler.edited.substring(parameters.stop);
-    if (text.search(/(?:\s|<\/?div>|<br>)*\{/i) !== 0) {
+    if (text.search(/(?:\s|<\/?div>|<br>)*\{/) !== 0) {
         return;
     }
 
@@ -632,7 +716,7 @@ function styleLocalVariables(styler, parameters) {
     // find parameter names
     const groups = [ [] ];  // return 1st (and only) capture group
     styler.findCaptureGroups(
-        /\b(\w+)(?:\s|<\/?div>|<br>)*(?:,|\))/gi,
+        /\b(\w+)(?:\s|<\/?div>|<br>)*(?:,|\))/g,
         ["variable"],  // style for names in parameter list
         groups);
 
@@ -661,7 +745,7 @@ function styleFunctions(styler) {
     const groups = [ [] ];               // only return 1st capture group
     const styles = [ "", "parameters"];  // temp style for 2nd group
     styler.findCaptureGroups(
-        /([a-z_]\w*)(?:\s|<\/?div>|<br>)*\((.*?\))/gi,
+        /([A-Za-z_]\w*)(?:\s|<\/?div>|<br>)*\((.*?\))/g,
         styles,
         groups);
 
@@ -719,23 +803,13 @@ function preserveCaret(element, html) {
 // apply styling step-by-step and display for user
 function styleEditBox() {
 
-    // matches HTML-encoded line breaks
-    const splitAcrossLines = /<\/?div>|<br>/i;
-
     const editBox = document.getElementById("editBox");
     const html    = unstyledFromStyled(editBox.innerHTML);
     const styler  = new StyleBuilder(html);
 
-    styleCommentsAndLiterals(styler, splitAcrossLines);
+    styleCommentsAndLiterals(styler);
     stylePreprocessorDirectives(styler);
-
-    // color-code most keywords
-    styler.updateMatchedText(
-        regexFromList(keyword),
-        "keyword",
-        null,       // keywords are all single tokens
-        "$", "$");  // mark hidden text with dollar signs at either end
-
+    styleKeywords(styler);
     styleFunctions(styler);
 
     // apply styling and update edit box
