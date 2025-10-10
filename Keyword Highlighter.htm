@@ -81,7 +81,7 @@ body, input {
 }
 
 .variable {
-    color: yellow;
+    color: magenta;
 }
 
 .userDefined {
@@ -383,331 +383,6 @@ class StyleBuilder {
 
 // -----------------------------------------------------------------------------
 /*
-class StringToken {
-
-    constructor(string, start, style) {
-        this.string = string;
-        this.start  = start;
-        this.style  = style;
-    }
-
-    get end() {
-        return this.start + this.string.length;
-    }
-
-    contains(s) {
-        return this.string.indexOf(s) > -1;
-    }
-}
-
-function segmentString(string, regex) {
-
-    return string.split(regex).filter((s) => s.length > 0);
-}
-
-function tokenizeString(string, start, end, regex, nextFunc, style) {
-
-    const segments = segmentString(string.substring(start, end), regex);
-    const tokens   = [];
-
-    let i = 0;
-    while (i < segments.length) {
-
-        if (nextFunc && !nextFunc(segments, i)) {
-            continue;
-        }
-
-        start = string.indexOf(segments[i], start);
-        tokens.push(new StringToken(segments[i], start, style));
-        start += segments[i].length;
-
-        i++;
-    }
-
-    return tokens;
-}
-
-function splitSegment(segments, index, regex) {
-
-    const newSegments = segmentString(segments[index], regex);
-
-    if (newSegments.length > 0) {
-        segments.splice(index, 1, ...newSegments);
-        return true;
-    }
-
-    else {
-        segments.splice(index, 1);
-        return false;
-    }
-}
-
-function validateSegment(segments, index) {
-
-    let valid = true;
-
-    if (segments[index].indexOf("#") > 0) {
-        valid = splitSegment(segments, index, /(?<!^)#/);
-    }
-
-    if (segments[index].indexOf("-") > 0) {
-        valid = valid && splitSegment(segments, index, /(?<!^)(?<!e)-/i);
-    }
-
-    if (segments[index].search(/-?\.?\d/) != 0) {
-        valid = valid && splitSegment(segments, index, ".");
-    }
-
-    return valid;
-}
-
-function ignoreAnnotations(tokens, annotations) {
-
-    let styles = tokens.filter((t) => t.style != "");
-
-    for (let i = 0; i < annotations.length; i++) {
-        styles = styles.filter((t) => t.styles != annotations[i]);
-    }
-
-    return styles;
-}
-
-function old_buildStyledHTML(string, tokens, annotations) {
-
-    const styles = ignoreAnnotations(tokens, annotations);
-    if (styles.length < 1) {
-        return string;
-    }
-
-    let html = string.substring(0, styles[0].start);
-
-    for (let i = 0; i < styles.length; i++) {
-
-        html += "<span class='"  + styles[i].style + "'>" +
-                styles[i].string +
-                "</span>";
-
-        if (i + 1 < styles.length) {
-            html += string.substring(styles[i].end, styles[i + 1].start);
-        } else {
-            html += string.substring(styles[i].end);
-        }
-    }
-
-    return html;
-}
-
-// -----------------------------------------------------------------------------
-
-class TokenRange {
-
-    constructor() {
-        this.start = 0;
-        this.count = 0;
-    }
-}
-
-function selectTokens(tokens, start, end, delimiter) {
-
-    const range = new TokenRange();
-    if (tokens.length > 0) {
-        range.start = -1;
-    }
-
-    for (let i = 0; i < tokens.length; i++) {
-
-        if (tokens[i].start < start) {
-            continue;
-        }
-
-        if (range.start < 0) {
-            if (i > 0 && tokens[i - 1].contains(delimiter)) {
-                break;
-            }
-            range.start = i;
-        }
-
-        if (tokens[i].start >= end) {
-            break;
-        }
-
-        range.count++;
-    }
-
-    return range;
-}
-
-function styleByDelimiters(string, delimiters, tokens, style) {
-
-    let end;
-    for (let start = string.indexOf(delimiters[0]);
-             start > -1;
-             start = string.indexOf(delimiters[0], end)) {
-
-        end = string.indexOf(delimiters[1], start + delimiters[0].length);
-        if (end > -1) {
-            end += delimiters[1].length;
-        } else {
-            end  = string.length;
-        }
-
-        const range = selectTokens(tokens, start, end, delimiters[0]);
-        if (range.start < 0) {
-            continue;
-        }
-
-        const newTokens = tokenizeString(string, start, end,
-            /<\/?div>|<br>/i, null, style);
-
-        tokens.splice(range.start, range.count, ...newTokens);
-    }
-}
-
-function styleByList(list, tokens, style, offset = 0) {
-
-    for (let i = 0; i < tokens.length; i++) {
-        for (let j = 0; j < list.length; j++) {
-
-            if (tokens[i].string == list[j]) {
-                tokens[i + offset].style = style;
-            }
-        }
-    }
-}
-
-function styleByRegex(regex, tokens, style) {
-
-    for (let i = 0; i < tokens.length; i++) {
-
-        if (regex.test(tokens[i].string)) {
-            tokens[i].style = style;
-        }
-    }
-}
-
-// -----------------------------------------------------------------------------
-
-function eraseRange(string, start, end) {
-
-    let result  = string.substring(0, start);
-        result += " ".repeat(end - start);
-        result += string.substring(end);
-
-    return result;
-}
-
-function eraseTokens(string, tokens, style) {
-
-    const ranges = tokens.filter((t) => t.style == style);
-
-    for (let i = 0; i < ranges.length; i++) {
-        string = eraseRange(string, tokens[i].start, tokens[i].end);
-    }
-
-    return string;
-}
-
-function findClosingDelimiter(string, opening, delimiters) {
-
-    const d0 = delimiters[0].length;
-    const d1 = delimiters[1].length;
-
-    let closing = opening;
-    do {
-
-        closing = string.indexOf(delimiters[1], closing + d1);
-        if (closing < 0) {
-            closing = string.length;
-        }
-
-        opening = string.indexOf(delimiters[0], opening + d0);
-        if (opening < 0) {
-            opening = string.length;
-        }
-
-    } while (opening < closing);
-
-    return closing;
-}
-
-function extractTopLevel(string, delimiters, tokens, styles) {
-
-    const d0 = delimiters[0].length;
-    const d1 = delimiters[1].length;
-
-    for (let i = 0; i < styles.length; i++) {
-        string = eraseTokens(string, tokens, styles[i]);
-    }
-
-    let closing;
-    for (let opening = string.indexOf(delimiters[0]);
-             opening > -1;
-             opening = string.indexOf(delimiters[0], closing + d1)) {
-
-        closing = findClosingDelimiter(string, opening, delimiters);
-        string  = eraseRange(string, opening + d0, closing);
-    }
-
-    return string;
-}
-
-function findLastTokenBefore(index, tokens, start) {
-
-    for (let i = start; i < tokens.length; i++) {
-
-        if (tokens[i].start >= index) {
-            return i - 1;
-        }
-
-        if (i + 1 == tokens.length) {
-            return i;
-        }
-    }
-
-    return -1;
-}
-
-function listFunctions(topLevel, regex, tokens) {
-
-    const functions = [];
-
-    let index  = 0;
-    let offset = 0;
-    for (let params = topLevel.search(regex);
-             params > -1;
-             params = topLevel.search(regex)) {
-
-        index = findLastTokenBefore(params + offset, tokens, index + 1);
-        if (index < 0) {
-            break;
-        }
-
-        if (functions.at(-1) != tokens[index].string) {
-            functions.push(tokens[index].string);
-        }
-
-        topLevel = topLevel.substring(params + 1);
-        offset  += params + 1;
-    }
-
-    return functions;
-}
-
-function listDefinitions(tokens, keyword) {
-
-    const definitions = [];
-
-    for (let i = 0; i < tokens.length; i++) {
-        if (tokens[i].string == keyword && i + 1 < tokens.length) {
-            definitions.push(tokens[i + 1].string);
-        }
-    }
-
-    return definitions;
-}
-*/
-// -----------------------------------------------------------------------------
-/*
 
 find and erase whitespace/html
 find and erase comments
@@ -927,20 +602,17 @@ function findClosingDelimiter(text, opensAt, opener, closer) {
     let closesAt = opensAt;
     do {
 
-        // find possible match
         closesAt = text.indexOf(closer, closesAt + closer.length);
         if (closesAt < 0) {
             closesAt = text.length;
         }
 
-        // find next opener
         opensAt = text.indexOf(opener, opensAt + opener.length);
         if (opensAt < 0) {
             opensAt = text.length;
         }
 
-    // keep looking until next opener is after current closer
-    // don't use <= because potentially causes infinite loop
+    // doesn't use <= because potential for infinite loop
     } while (opensAt < closesAt);
 
     return closesAt;
@@ -948,14 +620,14 @@ function findClosingDelimiter(text, opensAt, opener, closer) {
 
 function styleLocalVariables(styler, parameters) {
 
-    // check for function body
+    // confirm has function body
     const text = styler.edited.substring(parameters.stop);
-    if (text.search(/\)(?:\s|<\/?div>|<br>)*\{/i) !== 0) {
+    if (text.search(/(?:\s|<\/?div>|<br>)*\{/i) !== 0) {
         return;
     }
 
     // scope down to just parameter list
-    styler.setScope(parameters.start, parameters.stop + 1);
+    styler.setScope(parameters.start, parameters.stop);
 
     // find parameter names
     const groups = [ [] ];  // return 1st (and only) capture group
@@ -964,18 +636,21 @@ function styleLocalVariables(styler, parameters) {
         ["variable"],  // style for names in parameter list
         groups);
 
+    // confirm has at least one parameter
+    if (groups[0].length < 1) {
+        return;
+    }
+
     // change scope to function body
-    const opensAt  = text.indexOf("{");
-    const closesAt = findClosingDelimiter(text, opensAt, "{", "}");
-    styler.setScope(opensAt + 1, closesAt);
+    const opensAt = text.indexOf("{");
+    styler.setScope(
+        parameters.stop + opensAt,
+        parameters.stop + findClosingDelimiter(text, opensAt, "{", "}"));
 
     // color-code parameter names
-    if (groups[0].length > 0) {
-
-        styler.updateMatchedText(
-            regexFromList(groups[0]),
-            "variable");
-    }
+    styler.updateMatchedText(
+        regexFromList(groups[0]),
+        "variable");
 
     styler.clearScope();
 }
@@ -983,26 +658,26 @@ function styleLocalVariables(styler, parameters) {
 function styleFunctions(styler) {
 
     // find functions and their parameter lists
-    const groups = [ [], [] ];           // return both capture groups
+    const groups = [ [] ];               // only return 1st capture group
     const styles = [ "", "parameters"];  // temp style for 2nd group
     styler.findCaptureGroups(
-        /([a-z_]\w*)(?:\s|<\/?div>|<br>)*\((.*?)\)/gi,
+        /([a-z_]\w*)(?:\s|<\/?div>|<br>)*\((.*?\))/gi,
         styles,
         groups);
 
-    // color-code function names
-    if (groups[0].length > 0) {
-
-        styler.updateMatchedText(
-            regexFromList(groups[0]),
-            "function");
+    // confirm has at least one function
+    if (groups[0].length < 1) {
+        return;
     }
 
-    // extract parameter list Styling objects
+    // color-code function names
+    styler.updateMatchedText(
+        regexFromList(groups[0]),
+        "function");
+
+    // extract parameter list Styling objects from styler
     const parameters = styler.styling
         .filter(function(s) { return s.style === styles[1]; });
-
-    // remove temporary style
     styler.removeStyling(styles[1]);
 
     // find and color-code variable names within each function
