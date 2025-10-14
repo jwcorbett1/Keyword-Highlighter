@@ -507,6 +507,58 @@ while top level
         scope to parameter list + function body
     color-code local variables
 
+
+
+color-code all comments - hide
+    single line
+    multi-line
+color-code all literals - obfusticate
+    character
+    string
+    integer
+    floating point
+color-code all preprocessor directives - obfusticate
+    create list of macro names - color-code, but scoped
+    update list based on #undef
+color-code all keywords - obfusticate
+
+
+for each code segment:
+----------------------
+color-code function names
+    create list of function names
+find struct, enum, and union names - split struct/union from enum
+    handle anonymous composites
+    handle nested composites - inside each other and inside functions
+    update global/local lists of composite names - color-code
+    update global/local lists of enum item names - color-code
+find parameter and variable names
+    handle known data types
+    handle typedefs
+    update global/local lists of parameter/variable names - color-code
+    update global/local lists of typedef names - color-code
+
+
+class ScopeBlock {
+
+    constructor() {
+        this.type  = type;  // function or enum
+        this.start = start;
+        this.stop  = stop;
+    }
+}
+
+
+class ScopedName {
+
+    constructor(token, style, start, stop) {
+        this.token = token;  // what to match
+        this.style = style;  // style to use when matched
+        this.start = start;  // where token first declared
+        this.stop  = stop;   // defaults to string.length
+    }
+}
+
 */
 // -----------------------------------------------------------------------------
 // all regular expressions confined to this section
@@ -992,3 +1044,4 @@ function initialize() {
 
 </body>
 </html>
+
