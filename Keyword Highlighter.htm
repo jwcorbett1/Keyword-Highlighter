@@ -606,6 +606,60 @@ locate typedefs, for each:
     add to style token array with appropriate end
     add to type token array with appropriate end
 
+
+
+
+
+
+color-code single line and multi-line comments
+color-code character literals and string literals
+color-code integer and floating-point literals
+color-code preprocessor directives
+locate #defines, for each with macro:
+    locate matching #undef
+    color-code macro name between #define and #undef (or end of text)
+color-code keywords
+
+scope object:
+    has start
+    has end
+
+create array for definition scope objects - for typedefs and variables
+locate structs, unions, and enums, for each:
+    color-code name immediately after keyword
+    if exists body:
+        add to definition scope array
+
+token object extends scope object:
+    adds text
+    adds style
+    adds local/global flag
+
+create array for function scope objects
+create array for style token objects
+locate functions, for each:
+    add name to style token array as global
+    if exists function body:
+        add to function scope array
+    if exists parameter list:
+        locate parameter list names, for each:
+            add to style token array as local (include list indices)
+locate enums again, for each:
+    if enum within function scope, use local, else use global
+    locate enum item names, for each:
+        add to style token array as local/global
+
+create temp version of text with definition scope objects hidden
+create array for type token objects
+locate typedefs, for each:
+    if typedef within function scope, use local, else use global
+    add to type token array as local/global
+create regex for all known data types:
+    include keyword types, struct/union/enum/typedef, and all typedef types
+locate possible variables, for each:
+    if contains keyword typedef, discard
+    if using typedef type but type not in scope, discard
+
 */
 // -----------------------------------------------------------------------------
 // all regular expressions confined to this section
@@ -1091,5 +1145,6 @@ function initialize() {
 
 </body>
 </html>
+
 
 
