@@ -559,6 +559,53 @@ class ScopedName {
     }
 }
 
+
+
+color-code single line comments
+color-code multi-line comments
+color-code character literals
+color-code string literals
+color-code integer and floating-point literals
+color-code preprocessor directives
+locate #defines, for each with macro:
+    locate matching #undef
+    color-code macro name between #define and #undef (or end of text)
+color-code keywords
+
+scope object:
+    has start
+    has end
+
+create array for function scope objects
+locate functions, for each:
+    color-code function name throughout text
+    if exists function body:
+        add to function scope array
+    if exists parameter list:
+        color-code parameter names within list (plus function body if exists)
+
+create array for definition scope objects
+locate structs, unions, and enums, for each:
+    color-code name immediately after keyword
+    if exists body:
+        add to definition scope array
+
+token object extends scope object:
+    adds text
+    adds style
+
+create array for style token objects
+locate enums, for each:
+    if enum within function scope, end is end of scope, else end is end of text
+    locate enum item names, for each:
+        add to style token array with appropriate end
+
+create array for type token objects
+locate typedefs, for each:
+    if typedef within local scope, end is end of scope, else end is end of text
+    add to style token array with appropriate end
+    add to type token array with appropriate end
+
 */
 // -----------------------------------------------------------------------------
 // all regular expressions confined to this section
@@ -1044,4 +1091,5 @@ function initialize() {
 
 </body>
 </html>
+
 
