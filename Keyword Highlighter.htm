@@ -662,6 +662,45 @@ locate possible variables, for each:
     if contains keyword typedef, discard
     if using typedef type but type not in scope, discard
 
+
+
+const preprocessorDirectives = [
+    "define",
+    "elif",
+    "elifdef",
+    "elifndef",
+    "else",
+    "embed",
+    "endif",
+    "error",
+    "if",
+    "ifdef",
+    "ifndef",
+    "include",
+    "line",
+    "pragma",
+    "undef",
+    "warning"
+];
+
+const keywords = [
+];
+
+const lineBreakRegex      = /<\/?div>|<br>/;
+const commentRegex        = /\/\/.*?<\/?div>|\/\*.*?\*\//g;
+const numericLiteralRegex = /-?\.?\d[A-Za-z\d.-]*/g;             /*
+const textLiteralRegex    =
+    /\w{0,3}(['"]).*?(?<!\\<\/div>|.{6}\\)(?:\1|<div>)/g;
+
+const includeFileRegex  = /#\s*include\s+(&lt;.*?(?:&gt;|<\/?div>))/g;
+const macroRegex        = /#\s*define\s+([A-Za-z_]\w*)/g;
+const preprocessorRegex = new RegExp(
+    "#\\s*(?:" + preprocessorDirectives.join("|") + "))\\b", "g");
+
+const typeTagRegex = //g;
+const keywordRegex = new RegExp(
+    );
+
 */
 // -----------------------------------------------------------------------------
 // all regular expressions confined to this section
@@ -1147,6 +1186,7 @@ function initialize() {
 
 </body>
 </html>
+
 
 
 
