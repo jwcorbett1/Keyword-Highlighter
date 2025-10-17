@@ -701,6 +701,36 @@ const typeTagRegex = //g;
 const keywordRegex = new RegExp(
     );
 
+
+
+Single and Multi-Line Comments
+String and Character Literals
+Include Files in Angle Brackets
+
+Floating-Point Literals
+Integer Literals
+Preprocessor Directives
+Preprocessor Macros - TEST FIRST!
+Keywords
+Struct/Union/Enum Tag Names - TEST FIRST!
+
+Function Names, Function Parameters, Enum Constants
+Global Variables, Local Variables, Typedef Names
+
+Handle Scoping
+
+class scope {
+
+    constructor(start, end, parameters) {
+        this.start      = start;
+        this.end        = end;
+        this.parameters = parameters;
+    }
+}
+
+string.replace(/\{[^}]*\}/g, "{ }");
+string.replace(/\([^,)]*,[^)]*\)/g, "( )");
+
 */
 // -----------------------------------------------------------------------------
 // all regular expressions confined to this section
@@ -1186,6 +1216,7 @@ function initialize() {
 
 </body>
 </html>
+
 
 
 
