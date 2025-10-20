@@ -734,7 +734,7 @@ string.replace(/\([^,)]*,[^)]*\)/g, "( )");
 
 
 while "done" flag not set
-  regex from last index using /([A-Za-z_]\w*)\s*([{[=,;]/g
+  regex from last index using /([A-Za-z_]\w*)?\s*([{[=,;]/g
   for case "{":
     find matching closer
     move last index to closer position
@@ -757,7 +757,7 @@ while "done" flag not set
       add identifier to temp list
     set "done flag"
 
-const regex = /([A-Za-z_]\w*)\s*([{[=,;])/g;
+const regex = /([A-Za-z_]\w*)?\s*([{[=,;])/g;
 
 const tempList = [];
 let   ignore   = false;
@@ -1294,6 +1294,7 @@ function initialize() {
 
 </body>
 </html>
+
 
 
 
