@@ -809,6 +809,69 @@ if (fullLine.indexOf("typedef") !== -1) {
     addVariables(tempList);
 }
 
+
+
+function extractIdentifiers(string, index, regex, identifiers) {
+
+    // flag to track whether an identifier should be added or ignored
+    let addMatch = true;
+
+    // set the starting index and walk through the string looking for pattern matches
+    regex.lastIndex = index;
+    for (let match = regex.exec(string);
+             match !== null;
+             match = regex.exec(string)) {
+
+        switch (match[2]) {
+
+            // skip over anything in braces (structure definitions, initializer lists, etc.)
+            case "{":
+                regex.lastIndex = findClosingDelimiter(string, regex.lastIndex, "{", "}");
+                break;
+
+            // skip over anything in brackets (array sizes, array element initializers, etc.)
+            // add the identifier before the brackets if nothing has been added yet
+            case "[":
+                regex.lastIndex = findClosingDelimiter(string, regex.lastIndex, "[", "]");
+                if (addMatch) {
+                    identifiers.push(match[1]);
+                    addMatch = false;
+                }
+                break;
+
+            // add the identifier before the equals sign if nothing has been added yet
+            case "=":
+                if (addMatch) {
+                    identifiers.push(match[1]);
+                    addMatch = false;
+                }
+                break;
+
+            // add the identifier before the comma if nothing has been added yet
+            // clear the flag for whether to add identifiers if it is set
+            case ",":
+                if (addMatch) {
+                    identifiers.push(match[1]);
+                } else {
+                    addMatch = true;
+                }
+                break;
+
+            // add the identifier before the semicolon or closing parenthesis if nothing has been added yet
+            // return the first index after the terminating character
+            case ";":
+            case ")":
+                if (addMatch) {
+                    identifiers.push(match[1]);
+                }
+                return regex.lastIndex;
+        }
+    }
+
+    // no terminating character was found - the phrase extends to the end of the string
+    return string.length;
+}
+
 */
 // -----------------------------------------------------------------------------
 // all regular expressions confined to this section
@@ -1294,6 +1357,7 @@ function initialize() {
 
 </body>
 </html>
+
 
 
 
