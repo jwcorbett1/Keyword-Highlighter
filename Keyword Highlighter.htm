@@ -731,6 +731,84 @@ class scope {
 string.replace(/\{[^}]*\}/g, "{ }");
 string.replace(/\([^,)]*,[^)]*\)/g, "( )");
 
+
+
+while "done" flag not set
+  regex from last index using /([A-Za-z_]\w*)\s*([{[=,;]/g
+  for case "{":
+    find matching closer
+    move last index to closer position
+  for case "[":
+    if "ignore" flag not set
+      add identifier to temp list
+      set "ignore" flag
+    find matching closer
+    move last index to closer position
+  for case "=":
+    if "ignore" flag not set
+      add identifier to temp list
+      set "ignore" flag
+  for case ",":
+    if "ignore" flag not set
+      add identifier to temp list
+    clear "ignore" flag
+  for case ";":
+    if "ignore" flag not set
+      add identifier to temp list
+    set "done flag"
+
+const regex = /([A-Za-z_]\w*)\s*([{[=,;])/g;
+
+const tempList = [];
+let   ignore   = false;
+let   match    = regex.exec(string);
+
+while (match !== null) {
+
+    switch (match[2].charAt(0)) {
+
+        case '{': 
+            regex.lastIndex = matchDelim(string, regex.lastIndex, "{", "}");
+            break;
+
+        case '[':
+            regex.lastIndex = matchDelim(string, regex.lastIndex, "[", "]");
+            // fall through to next case...
+
+        case '=':
+            if (!ignore) {
+                tempList.push(match[1]);
+                ignore = true;
+            }
+            break;
+
+        case ',':
+            if (!ignore) {
+                tempList.push(match[1]);
+            } else {
+                ignore = false;
+            }
+            break;
+
+        case ';':
+            if (!ignore) {
+                tempList.push(match[1]);
+            }
+            match = null;
+            continue;
+    }
+
+    match = regex.exec(string);
+}
+
+const fullLine = string.substring(startIndex, regex.lastIndex);
+
+if (fullLine.indexOf("typedef") !== -1) {
+    addTypes(tempList);
+} else {
+    addVariables(tempList);
+}
+
 */
 // -----------------------------------------------------------------------------
 // all regular expressions confined to this section
@@ -1216,6 +1294,7 @@ function initialize() {
 
 </body>
 </html>
+
 
 
 
