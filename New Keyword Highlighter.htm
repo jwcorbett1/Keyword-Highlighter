@@ -169,7 +169,7 @@ const tagTypeRegex    =
     /\b(?:enum|struct|union)(?:\s|<\/?div>|<br>)+([A-Za-z_]\w*)/g;
 
 // -----------------------------------------------------------------------------
-// manage global state data
+// manage global state
 
 class Scope {
     constructor(start = 0, stop = 0) {
@@ -293,7 +293,7 @@ function tryStyle(match, style, token = match[1]) {
     return addStyle(style, start, stop);
 }
 
-// search for #undef for given token and return index
+// HELPER - search for #undef for given token and return index
 function findMacroScope(token, start, style) {
 
     const regex = new RegExp("#\\s*undef\\s+" + token + "\\b", "g");
@@ -354,24 +354,69 @@ function styleGroups(regex, action, style) {
 
 // -----------------------------------------------------------------------------
 
-function findCloser(opensAt, opener, closer) {
+function findCloser(start, opener, closer) {
 
-    let closesAt = opensAt;
+    let stop = start;
     do {
 
-        closesAt = text.indexOf(closer, closesAt + closer.length);
-        if (closesAt === -1) {
-            closesAt = text.length;
+        // find first/next closer
+        stop = text.indexOf(closer, stop + closer.length);
+        if (stop === -1) {
+            stop = text.length;
         }
 
-        opensAt = text.indexOf(opener, opensAt + opener.length);
-        if (opensAt === -1) {
-            opensAt = text.length;
+        // find next opener
+        start = text.indexOf(opener, start + opener.length);
+        if (start === -1) {
+            start = text.length;
         }
 
-    } while (opensAt < closesAt);  // using <= can cause infinite loop
+    // start less than stop only if next opener was nested
+    // if nested, current closer matches with wrong opener
+    } while (start < stop);  // using <= can cause infinite loop
 
-    return closesAt;
+    // return index of closer which matches with original opener
+    return stop;
+}
+
+function findIdentifiers(regex, start, identifiers) {
+
+    // should potential identifier be added or ignored?
+    let addMatch = true;
+
+    regex.lastIndex = start;
+    for (let match = regex.exec(text);
+             match !== null;
+             match = regex.exec(text)) {
+
+        // match against 2nd capture group
+        switch (match[2]) {
+
+            case "{":
+            case "[":
+            case "=":
+            case ",":
+
+            case ";":
+            case ")":
+        }
+    }
+}
+
+function styleLocalScopes() {
+
+    // start at beginning of file
+    localScopeRegex.lastIndex = 0;
+
+    for (let match = localScopeRegex.exec(text);
+             match !== null;
+             match = localScopeRegex.exec(text)) {
+
+        const start = localScopeRegex.lastIndex - 1;
+        const stop  = findCloser(start, "{", "}");
+
+        localScopeRegex.lastIndex = stop + 1;
+    }
 }
 
 // -----------------------------------------------------------------------------
