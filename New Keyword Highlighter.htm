@@ -43,7 +43,7 @@ body, input {
     padding:   0 0 0.7em;
 }
 
-/* invisible control hidden behind toolbar buttons */
+/* invisible and hidden behind toolbar buttons */
 #filePicker {
     position: absolute;
     z-index:  -1;
@@ -81,11 +81,19 @@ body, input {
     color: cyan;
 }
 
+.function {
+    color: orange;
+}
+
+.parameter {
+    color: pink;
+}
+
 /* -------------------------------------------------------------------------- */
     </style>
     <script>
 // -----------------------------------------------------------------------------
-// pre-build complex regular expressions
+// building complex regular expressions
 
 const preprocessorDirectives = [
     "define",
@@ -151,7 +159,7 @@ const oldStylingRegex = /<\/?font[^>]*>|<\/?span[^>]*>/g;
 const lineBreakRegex  = /<\/?div>|<br>/;  // doesn't need to be global
 
 const commentRegex = /\/\/.*?<\/?div>|\/\*.*?\*\//g;
-const numberRegex  = /-?\.?\d[A-Za-z\d.-]*/g;
+const numberRegex  = /\-?\.?\d[A-Za-z\d\-\.]*/g;
 const stringRegex  =
     /(?:L|U|u|u8)?(['"]).*?(?<!\\<\/div>|.{6}\\)(?:\1|<div>)/g;
 
@@ -160,13 +168,18 @@ const defineMacroRegex  = /#\s*define\s+([A-Za-z_]\w*)/g;
 const preprocessorRegex = new RegExp(
     "#\\s*(?:" + preprocessorDirectives.join("|") + ")\\b", "g");
 
-const keywordRegex = new RegExp(
-    "\\b(?:" + keywords.join("|")  + "|" +
-               dataTypes.join("|") + ")\\b", "g");
-
-const localScopeRegex = /\((.*?)\)(?:\s|<\/?div>|<br>)*{/g;
-const tagTypeRegex    =
+const tagTypeRegex =
     /\b(?:enum|struct|union)(?:\s|<\/?div>|<br>)+([A-Za-z_]\w*)/g;
+
+const variableNameRegex  =
+    /\b([A-Za-z_]\w*)?(?:\s|<\/?div>|<br>)*([\{\[=,;])/g;
+const parameterNameRegex =
+    /\b([A-Za-z_]\w*)?(?:\s|<\/?div>|<br>)*([\[,\)])/g;
+const enumConstantRegex  =
+    /\b([A-Za-z_]\w*)?(?:\s|<\/?div>|<br>)*([=,\}])/g;
+const localScopeRegex    = new RegExp(
+    "\\b([A-Za-z_]\\w*)(?:\\s|<\\/?div>|<br>)*" +
+          "\\([^\\)]*\\)(?:\\s|<\\/?div>|<br>)*\\{", "g");
 
 // -----------------------------------------------------------------------------
 // manage global state
@@ -278,6 +291,13 @@ function styleMatches(regex, action, style) {
     }
 }
 
+// build regex, find token(s) and apply given style to each
+function quickStyle(tokens, style) {
+
+    const regex = new RegExp("\\b(?:" + tokens + ")\\b", "g");
+    styleMatches(regex, addStyle, style);
+}
+
 // -----------------------------------------------------------------------------
 // apply action only to regex capture group
 
@@ -326,12 +346,9 @@ function styleMacro(match, style) {
         start,
         findMacroScope(match[1], start, style));
 
-    // add style to token within scope
-    const regex = RegExp("\\b" + match[1] + "\\b", "g");
-    styleMatches(regex, addStyle, style);
-
-    // remove search limit
-    clearScope();
+    // add style to tokens within scope
+    quickStyle(match[1], style);
+    clearScope();  // remove search limit
 }
 
 // find regex capture groups and apply given action to each
@@ -371,52 +388,127 @@ function findCloser(start, opener, closer) {
             start = text.length;
         }
 
-    // start less than stop only if next opener was nested
-    // if nested, current closer matches with wrong opener
+    // if start less than stop, next opener was nested
+    // if nested, current closer doesn't match original opener
     } while (start < stop);  // using <= can cause infinite loop
 
-    // return index of closer which matches with original opener
+    // return index of closer matching original opener
     return stop;
 }
 
-function findIdentifiers(regex, start, identifiers) {
+function findIdentifiers(regex, identifiers) {
 
-    // should potential identifier be added or ignored?
-    let addMatch = true;
+    // helper function
+    const addMatch = function(m) {
+        if (m) { identifiers.push(m); } };
 
-    regex.lastIndex = start;
+    // empty identifiers list
+    identifiers.length = 0;
+
+    // should potential identifier be added to list or ignored?
+    let validMatch = true;
+    let start;
+
+    regex.lastIndex = scope.start;
     for (let match = regex.exec(text);
              match !== null;
              match = regex.exec(text)) {
 
-        // match against 2nd capture group
+        const stop = match.index + match[0].length;
+        if (stop > scope.stop) {
+            break;
+        }
+
+        // switch on 2nd capture group
+        // regex parameter determines which cases are actually used
         switch (match[2]) {
 
+            // skip over anything inside braces
             case "{":
-            case "[":
-            case "=":
-            case ",":
+                start           = regex.lastIndex - 1;
+                regex.lastIndex = findCloser(start, "{", "}") + 1;
+                break;
 
-            case ";":
-            case ")":
+            // if first valid match, add identifier before brackets
+            // then skip over anything inside brackets
+            case "[":
+                if (validMatch) {
+                    addMatch(match[1]);  // add 1st capture group
+                    validMatch = false;
+                }
+                start           = regex.lastIndex - 1;
+                regex.lastIndex = findCloser(start, "[", "]") + 1;
+                break;
+
+            // if first valid match, add identifier before equals sign
+            case "=":
+                if (validMatch) {
+                    addMatch(match[1]);  // add 1st capture group
+                    validMatch = false;
+                }
+                break;
+
+            // if first valid match, add identifier before comma
+            // reset valid match flag either way
+            case ",":
+                if (validMatch) {
+                    addMatch(match[1]);  // add 1st capture group
+                }
+                validMatch = true;
+                break;
+
+            // if first valid match, add identifier before delimiter
+            // then return first index after delimiter
+            case ";":  // ends variable declaration
+            case ")":  // ends parameter list
+            case "}":  // ends enum constants list
+                if (validMatch) {
+                    addMatch(match[1]);  // add 1st capture group
+                }
+                return regex.lastIndex;
         }
     }
+
+    // reached end of scope without finding delimiter
+    return scope.stop;
 }
 
-function styleLocalScopes() {
+function styleLocalScopes(functions, parameters, variables, constants) {
 
-    // start at beginning of file
+    const functionNames = [];
+    const identifiers   = [];
+
+    // start at beginning of text
     localScopeRegex.lastIndex = 0;
 
     for (let match = localScopeRegex.exec(text);
              match !== null;
              match = localScopeRegex.exec(text)) {
 
+        // confirm this is a valid function
+        if (!tryStyle(match, functions)) {
+            continue;
+        }
+        functionNames.push(match[1]);  // add to list
+
+        // find start and stop of local scope
         const start = localScopeRegex.lastIndex - 1;
         const stop  = findCloser(start, "{", "}");
 
+        // find parameter names in function signature
+        setScope(match.index + 1, match.index + match[0].length);
+        findIdentifiers(parameterNameRegex, identifiers);
+
+        // style parameter names throughout local scope
+        scope.stop = stop;
+        quickStyle(identifiers.join("|"), parameters);
+
+        // resume searching at end of function
         localScopeRegex.lastIndex = stop + 1;
     }
+
+    clearScope();
+    return functionNames;
 }
 
 // -----------------------------------------------------------------------------
@@ -504,8 +596,10 @@ function styleEditbox() {
     styleMatches(preprocessorRegex, addStyle,   "preprocessor");
     styleGroups(defineMacroRegex,   styleMacro, "macro");
 
-    styleMatches(keywordRegex, addStyle, "keyword");
+    quickStyle(keywords.join("|") + "|" + dataTypes.join("|"), "keyword");
     styleGroups(tagTypeRegex,  tryStyle, "tagType");
+
+    styleLocalScopes("function", "parameter", "", "");
 
     // replace old content with newly styled content
     maintainCaret(editbox, applyStyles(unstyled));
@@ -706,7 +800,7 @@ function initializePage() {
         <input type="text"
                id="filename">
 
-        <!-- invisible control hidden behind toolbar buttons -->
+        <!-- invisible and hidden behind toolbar buttons -->
         <input type="file"
                id="filePicker"
                accept="text/plain">
