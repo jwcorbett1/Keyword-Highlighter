@@ -69,7 +69,7 @@ body, input {
     color: gray;
 }
 
-.macro {
+.macro, .constant {
     color: purple;
 }
 
@@ -77,7 +77,7 @@ body, input {
     color: blue;
 }
 
-.tagType {
+.tagType, .typedef {
     color: cyan;
 }
 
@@ -87,6 +87,10 @@ body, input {
 
 .parameter {
     color: pink;
+}
+
+.variable {
+    color: coral;
 }
 
 /* -------------------------------------------------------------------------- */
@@ -159,7 +163,7 @@ const oldStylingRegex = /<\/?font[^>]*>|<\/?span[^>]*>/g;
 const lineBreakRegex  = /<\/?div>|<br>/;  // doesn't need to be global
 
 const commentRegex = /\/\/.*?<\/?div>|\/\*.*?\*\//g;
-const numberRegex  = /\-?\.?\d[A-Za-z\d\-\.]*/g;
+const numberRegex  = /(?<![A-Za-z_])\-?\.?\d[A-Za-z\d\-\.]*/g;
 const stringRegex  =
     /(?:L|U|u|u8)?(['"]).*?(?<!\\<\/div>|.{6}\\)(?:\1|<div>)/g;
 
@@ -168,18 +172,22 @@ const defineMacroRegex  = /#\s*define\s+([A-Za-z_]\w*)/g;
 const preprocessorRegex = new RegExp(
     "#\\s*(?:" + preprocessorDirectives.join("|") + ")\\b", "g");
 
-const tagTypeRegex =
+const enumerationRegex = /\benum\b[^;]*;/g;
+const tagTypeRegex     =
     /\b(?:enum|struct|union)(?:\s|<\/?div>|<br>)+([A-Za-z_]\w*)/g;
 
+const functionNameRegex  =
+    /\b([A-Za-z_]\w*)(?:\s|<\/?div>|<br>)*\(/g;
 const variableNameRegex  =
     /\b([A-Za-z_]\w*)?(?:\s|<\/?div>|<br>)*([\{\[=,;])/g;
 const parameterNameRegex =
     /\b([A-Za-z_]\w*)?(?:\s|<\/?div>|<br>)*([\[,\)])/g;
 const enumConstantRegex  =
     /\b([A-Za-z_]\w*)?(?:\s|<\/?div>|<br>)*([=,\}])/g;
-const localScopeRegex    = new RegExp(
+
+const localScopeRegex = new RegExp(
     "\\b([A-Za-z_]\\w*)(?:\\s|<\\/?div>|<br>)*" +
-          "\\([^\\)]*\\)(?:\\s|<\\/?div>|<br>)*\\{", "g");
+         "\\([^\\)]*\\)(?:\\s|<\\/?div>|<br>)*\\{", "g");
 
 // -----------------------------------------------------------------------------
 // manage global state
@@ -294,8 +302,10 @@ function styleMatches(regex, action, style) {
 // build regex, find token(s) and apply given style to each
 function quickStyle(tokens, style) {
 
-    const regex = new RegExp("\\b(?:" + tokens + ")\\b", "g");
-    styleMatches(regex, addStyle, style);
+    if (tokens) {
+        const regex = new RegExp("\\b(?:" + tokens + ")\\b", "g");
+        styleMatches(regex, addStyle, style);
+    }
 }
 
 // -----------------------------------------------------------------------------
@@ -351,6 +361,17 @@ function styleMacro(match, style) {
     clearScope();  // remove search limit
 }
 
+function styleFunction(match, style) {
+
+    // check if function name outside comment/string/etc.
+    if (!tryStyle(match, style)) {
+        return;
+    }
+
+    // add style to all valid tokens
+    quickStyle(match[1], style);
+}
+
 // find regex capture groups and apply given action to each
 function styleGroups(regex, action, style) {
 
@@ -371,6 +392,7 @@ function styleGroups(regex, action, style) {
 
 // -----------------------------------------------------------------------------
 
+// find brace/bracket which matches brace/bracket at starting index
 function findCloser(start, opener, closer) {
 
     let stop = start;
@@ -396,18 +418,17 @@ function findCloser(start, opener, closer) {
     return stop;
 }
 
+// extract valid identifiers from current segment of text
+// works for variables, function parameters, and enum constants
 function findIdentifiers(regex, identifiers) {
 
     // helper function
     const addMatch = function(m) {
         if (m) { identifiers.push(m); } };
 
-    // empty identifiers list
-    identifiers.length = 0;
-
-    // should potential identifier be added to list or ignored?
+    // should identifier be added to list or ignored?
     let validMatch = true;
-    let start;
+    let start;  // temp variable
 
     regex.lastIndex = scope.start;
     for (let match = regex.exec(text);
@@ -419,7 +440,6 @@ function findIdentifiers(regex, identifiers) {
             break;
         }
 
-        // switch on 2nd capture group
         // regex parameter determines which cases are actually used
         switch (match[2]) {
 
@@ -433,7 +453,7 @@ function findIdentifiers(regex, identifiers) {
             // then skip over anything inside brackets
             case "[":
                 if (validMatch) {
-                    addMatch(match[1]);  // add 1st capture group
+                    addMatch(match[1]);
                     validMatch = false;
                 }
                 start           = regex.lastIndex - 1;
@@ -443,7 +463,7 @@ function findIdentifiers(regex, identifiers) {
             // if first valid match, add identifier before equals sign
             case "=":
                 if (validMatch) {
-                    addMatch(match[1]);  // add 1st capture group
+                    addMatch(match[1]);
                     validMatch = false;
                 }
                 break;
@@ -452,62 +472,142 @@ function findIdentifiers(regex, identifiers) {
             // reset valid match flag either way
             case ",":
                 if (validMatch) {
-                    addMatch(match[1]);  // add 1st capture group
+                    addMatch(match[1]);
                 }
                 validMatch = true;
                 break;
 
             // if first valid match, add identifier before delimiter
-            // then return first index after delimiter
             case ";":  // ends variable declaration
             case ")":  // ends parameter list
             case "}":  // ends enum constants list
                 if (validMatch) {
-                    addMatch(match[1]);  // add 1st capture group
+                    addMatch(match[1]);
                 }
-                return regex.lastIndex;
+                return;  // delimiter found
         }
     }
-
-    // reached end of scope without finding delimiter
-    return scope.stop;
 }
 
-function styleLocalScopes(functions, parameters, variables, constants) {
+function styleIdentifiers(stop, match, regex, style) {
 
-    const functionNames = [];
-    const identifiers   = [];
+    // confirm still within valid scope
+    const matchEnd = match.index + match[0].length;
+    if (matchEnd > stop) {
+        return null;
+    }
+
+    // extract identifiers
+    const identifiers = [];
+    setScope(match.index, matchEnd);
+    findIdentifiers(regex, identifiers);
+
+    // style identifiers
+    scope.stop = stop;
+    quickStyle(identifiers.join("|"), style);
+    clearScope();
+
+    return identifiers;  // return for typedef handling
+}
+
+function styleEnumerations(start, stop, style) {
+
+    enumerationRegex.lastIndex = start;
+
+    for (let match = enumerationRegex.exec(text);
+             match !== null;
+             match = enumerationRegex.exec(text)) {
+
+        if (!styleIdentifiers(stop, match, enumConstantRegex, style)) {
+            break;
+        }
+    }
+}
+
+// helper function - manage data types regex for styleVariables()
+function createTypesRegex(start, types = null, previous = null) {
+
+    const begin = "\\b(?:";
+    const end   = ")\\b[^;]*;";
+
+    let regex;
+    if (!previous) {
+        regex = new RegExp(begin + dataTypes.join("|") + end, "g");
+        regex.lastIndex = start;  // initialize last index
+    }
+
+    else {
+        // combine previously found types with newly located typedefs
+        const combined = previous
+            .source
+            .replace(begin, "")
+            .replace(end,   "") + "|" + types.join("|");
+
+        regex           = new RegExp(begin + combined + end, "g");
+        regex.lastIndex = previous.lastIndex;  // carry over last index
+    }
+
+    return regex;
+}
+
+function styleVariables(start, stop, variables, typedefs) {
+
+    let regex = createTypesRegex(start);
+
+    for (let match = regex.exec(text);
+             match !== null;
+             match = regex.exec(text)) {
+
+        let style = variables;
+        if (match[0].indexOf("typedef") !== -1) {
+            style = typedefs;  // actually declaring typdefs instead
+        }
+
+        const types = styleIdentifiers(
+            stop, match, variableNameRegex, style);
+
+        // confirm still within valid scope
+        if (!types) {
+            break;
+        }
+
+        // add newly located typedefs to regex
+        if (style === typedefs) {
+            regex = createTypesRegex(0, types, regex);
+        }
+    }
+}
+
+function styleLocalScopes(
+    functions, parameters, variables, typedefs, constants) {
 
     // start at beginning of text
     localScopeRegex.lastIndex = 0;
 
+    const functionNames = [];
     for (let match = localScopeRegex.exec(text);
              match !== null;
              match = localScopeRegex.exec(text)) {
 
-        // confirm this is a valid function
+        // confirm valid function
         if (!tryStyle(match, functions)) {
             continue;
         }
-        functionNames.push(match[1]);  // add to list
+        functionNames.push(match[1]);
 
-        // find start and stop of local scope
+        // find indices for function body
         const start = localScopeRegex.lastIndex - 1;
         const stop  = findCloser(start, "{", "}");
 
-        // find parameter names in function signature
-        setScope(match.index + 1, match.index + match[0].length);
-        findIdentifiers(parameterNameRegex, identifiers);
+        // style parameters, and local variables and typedefs
+        styleIdentifiers(stop, match, parameterNameRegex, parameters);
+        styleEnumerations(start, stop, constants);
+        styleVariables(start, stop, variables, typedefs);
 
-        // style parameter names throughout local scope
-        scope.stop = stop;
-        quickStyle(identifiers.join("|"), parameters);
-
-        // resume searching at end of function
+        // resume search at end of this function
         localScopeRegex.lastIndex = stop + 1;
     }
 
-    clearScope();
     return functionNames;
 }
 
@@ -596,10 +696,18 @@ function styleEditbox() {
     styleMatches(preprocessorRegex, addStyle,   "preprocessor");
     styleGroups(defineMacroRegex,   styleMacro, "macro");
 
-    quickStyle(keywords.join("|") + "|" + dataTypes.join("|"), "keyword");
-    styleGroups(tagTypeRegex,  tryStyle, "tagType");
+    quickStyle(keywords.concat(dataTypes).join("|"), "keyword");
+    styleGroups(tagTypeRegex, tryStyle, "tagType");
 
-    styleLocalScopes("function", "parameter", "", "");
+    // style all local scopes first
+    const functionNames = styleLocalScopes(
+        "function", "parameter", "variable", "typedef", "constant");
+
+    // style global scope last
+    styleEnumerations(0, text.length, "constant");
+    styleVariables(   0, text.length, "variable", "typedef");
+    quickStyle(functionNames.join("|"), "function");
+    styleGroups(functionNameRegex, styleFunction, "function");
 
     // replace old content with newly styled content
     maintainCaret(editbox, applyStyles(unstyled));
