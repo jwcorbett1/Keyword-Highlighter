@@ -653,6 +653,7 @@ function convertToPosition(editbox, range) {
 
     let node     = range.endContainer;
     let position = range.endOffset;
+    let rawText  = false;
 
     if (node === editbox || !editbox.contains(node)) {
         return 0;
@@ -673,9 +674,20 @@ function convertToPosition(editbox, range) {
              child = child.nextSibling) {
 
         position += child.textContent.length;
-        if (child.nodeName === "DIV") {
-            position++;
+        switch (child.nodeName) {
+
+            case "DIV":
+                position++;
+                break;
+
+            case "#text":
+                rawText = true;
+                break;
         }
+    }
+
+    if (rawText) {
+        position++;
     }
 
     return position;
@@ -685,7 +697,7 @@ function collapsedRange(node, offset) {
 
     const range = document.createRange();
     range.setEnd(node, offset);
-    range.collapse;
+    range.collapse();
 
     return range;
 }
@@ -753,6 +765,7 @@ function maintainCaret(editbox, html) {
 */
 
     const position = convertToPosition(editbox, selection.getRangeAt(0));
+    alert("Position: " + position);
     editbox.innerHTML = html;
 
 /*
