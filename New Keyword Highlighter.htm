@@ -649,63 +649,90 @@ function applyStyles(unstyled) {
     return html;
 }
 
-/*
-
 function convertToPosition(editbox, range) {
 
-    let column = range.endOffset;
-    let node   = range.endContainer;
+    let node     = range.endContainer;
+    let position = range.endOffset;
+
+    if (node === editbox || !editbox.contains(node)) {
+        return 0;
+    }
 
     while (node.parentNode !== editbox) {
 
         while (node.previousSibling !== null) {
-            column += node.previousSibling.textContent.length;
-            node    = node.previousSibling;
+            node      = node.previousSibling;
+            position += node.textContent.length;
         }
 
         node = node.parentNode;
     }
 
-    let row = 0;
     for (let child = editbox.firstChild;
              child !== node;
              child = child.nextSibling) {
-        row++;
+
+        position += child.textContent.length;
+        if (child.nodeName === "DIV") {
+            position++;
+        }
     }
 
-    return [row, column];
+    return position;
+}
+
+function collapsedRange(node, offset) {
+
+    const range = document.createRange();
+    range.setEnd(node, offset);
+    range.collapse;
+
+    return range;
 }
 
 function convertToRange(editbox, position) {
 
     let node = editbox.firstChild;
-    for (let row = position[0]; row > 0; row--) {
+    if (node === null) {
+        return collapsedRange(editbox, 0);
+    }
+
+    while (node !== null && position > node.textContent.length) {
+
+        position -= node.textContent.length;
+        if (node.nodeName === "DIV") {
+            position--;
+        }
+
         node = node.nextSibling;
     }
 
-    let offset = position[1];
-    while (true) {
+    while (node !== null) {
 
-        if (offset > node.textContent.length) {
-            offset -= node.textContent.length;
-            node    = node.nextSibling;
+        if (position >= node.textContent.length) {
+            position -= node.textContent.length;
+            node      = node.nextSibling;
         }
 
         else if (node.firstChild !== null) {
             node = node.firstChild;
         }
 
-        else {
-            break;
-        }
+        else break;
     }
 
-    const range = document.createRange();
-    range.setEnd(node, offset);
-    return range;
-}
+    if (node === null) {
 
-*/
+        node = editbox.lastChild;
+        while (node.lastChild !== null) {
+            node = node.lastChild;
+        }
+
+        position = node.textContent.length;
+    }
+
+    return collapsedRange(node, position);
+}
 
 // try to keep caret in same spot
 // not 100% effective, but good enough for now
@@ -718,13 +745,17 @@ function maintainCaret(editbox, html) {
         return;
     }
 
+/*
     // get index to current location
     const range = selection.getRangeAt(0).cloneRange();
     range.setStart(editbox, 0);
     let caret = range.toString().length;
+*/
 
+    const position = convertToPosition(editbox, selection.getRangeAt(0));
     editbox.innerHTML = html;
 
+/*
     // step through newly created DOM tree to same index value
     const tree = document.createTreeWalker(editbox, NodeFilter.SHOW_TEXT);
     while (tree.nextNode() && caret > tree.currentNode.length) {
@@ -735,6 +766,9 @@ function maintainCaret(editbox, html) {
     // move caret to same index value (roughly)
     range.setStart(tree.currentNode, caret);
     range.collapse(true);
+*/
+
+    const range = convertToRange(editbox, position);
     selection.removeAllRanges();
     selection.addRange(range);
 }
@@ -981,5 +1015,6 @@ function initializePage() {
 </div><!-- end of container -->
 </body>
 </html>
+
 
 
