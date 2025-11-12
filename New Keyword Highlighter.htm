@@ -649,6 +649,64 @@ function applyStyles(unstyled) {
     return html;
 }
 
+/*
+
+function convertToPosition(editbox, range) {
+
+    let column = range.endOffset;
+    let node   = range.endContainer;
+
+    while (node.parentNode !== editbox) {
+
+        while (node.previousSibling !== null) {
+            column += node.previousSibling.textContent.length;
+            node    = node.previousSibling;
+        }
+
+        node = node.parentNode;
+    }
+
+    let row = 0;
+    for (let child = editbox.firstChild;
+             child !== node;
+             child = child.nextSibling) {
+        row++;
+    }
+
+    return [row, column];
+}
+
+function convertToRange(editbox, position) {
+
+    let node = editbox.firstChild;
+    for (let row = position[0]; row > 0; row--) {
+        node = node.nextSibling;
+    }
+
+    let offset = position[1];
+    while (true) {
+
+        if (offset > node.textContent.length) {
+            offset -= node.textContent.length;
+            node    = node.nextSibling;
+        }
+
+        else if (node.firstChild !== null) {
+            node = node.firstChild;
+        }
+
+        else {
+            break;
+        }
+    }
+
+    const range = document.createRange();
+    range.setEnd(node, offset);
+    return range;
+}
+
+*/
+
 // try to keep caret in same spot
 // not 100% effective, but good enough for now
 function maintainCaret(editbox, html) {
@@ -923,4 +981,5 @@ function initializePage() {
 </div><!-- end of container -->
 </body>
 </html>
+
 
