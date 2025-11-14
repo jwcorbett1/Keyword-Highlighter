@@ -97,6 +97,105 @@ body, input {
 /* -------------------------------------------------------------------------- */
     </style>
     <script>
+/*
+// -----------------------------------------------------------------------------
+// manage global state
+
+// apply style to text between these indices
+class Style {
+
+    constructor(style, start, stop) {
+        this.style = style;
+        this.start = start;
+        this.stop  = stop;
+    }
+}
+
+let   text   = "";
+const styles = [];  // array of Style objects
+
+function initializeGlobals(unstyled) {
+
+    text          = unstyled;
+    styles.length = 0;
+}
+
+// -----------------------------------------------------------------------------
+
+// ACTION - add to styles array, but prevent overlapping styles
+function addStyle(style, start, stop) {
+
+    for (let i = 0; i < styles.length; i++) {
+
+        if (start < styles[i].stop && stop > styles[i].start) {
+            return;  // overlap not allowed!
+        }
+    }
+
+    styles.push(new Style(style, start, stop));
+}
+
+// FILTER - apply style using action to each regex match
+function styleMatches(style, action, regex) {
+
+    for (let match = regex.exec(text);
+             match !== null;
+             match = regex.exec(text)) {
+
+        const start = match.index;
+        const stop  = match.index + match[0].length;
+
+        action(style, start, stop);
+    }
+}
+
+// -----------------------------------------------------------------------------
+// style text in editbox
+
+function applyStyles(unstyled) {
+
+    if (styles.length === 0) {
+        return unstyled;  // no styles to apply
+    }
+
+    styles.sort(function(a, b) {
+        return a.start - b.start; });  // sort array by starting index
+
+    // create short name for String.substring() calls
+    const substring = unstyled.substring.bind(unstyled);
+
+    let html = substring(0, styles[0].start);  // get beginning of text
+    for (let i = 0; i < styles.length; i++) {
+
+        // apply style to text
+        html += "<span class='" + styles[i].style + "'>"   +
+                substring(styles[i].start, styles[i].stop) +
+                "</span>";
+
+        // keep text between here and next style
+        if (i + 1 < styles.length) {
+            html += substring(styles[i].stop, styles[i + 1].start);
+        } else {
+            html += substring(styles[i].stop);  // get remainder of text
+        }
+    }
+
+    return html;
+}
+
+function styleEditbox() {
+
+    const editbox  = document.getElementById("editbox");
+    const unstyled = editbox.innerHTML.replace(stylingRegex, "");
+    initializeGlobals(unstyled);
+
+    const testRegex = /\btest\b/g;
+    styleMatches("keyword", addStyle, testRegex);
+
+    editbox.innerHTML = applyStyles(unstyled);
+}
+*/
+
 // -----------------------------------------------------------------------------
 // building complex regular expressions
 
@@ -730,8 +829,7 @@ function convertToRange(editbox, position) {
     return createRange(node, position);
 }
 
-// try to keep caret in same spot
-// not 100% effective, but good enough for now
+// keep caret in same spot
 function maintainCaret(editbox, html) {
 
     // confirm caret is active
@@ -741,28 +839,8 @@ function maintainCaret(editbox, html) {
         return;
     }
 
-/*
-    // get index to current location
-    const range = selection.getRangeAt(0).cloneRange();
-    range.setStart(editbox, 0);
-    let caret = range.toString().length;
-*/
-
     const position = convertToPosition(editbox, selection.getRangeAt(0));
     editbox.innerHTML = html;
-
-/*
-    // step through newly created DOM tree to same index value
-    const tree = document.createTreeWalker(editbox, NodeFilter.SHOW_TEXT);
-    while (tree.nextNode() && caret > tree.currentNode.length) {
-        caret -= tree.currentNode.length;
-    }
-    caret = Math.min(caret, tree.currentNode.length);
-
-    // move caret to same index value (roughly)
-    range.setStart(tree.currentNode, caret);
-    range.collapse(true);
-*/
 
     const range = convertToRange(editbox, position);
     selection.removeAllRanges();
@@ -1011,6 +1089,7 @@ function initializePage() {
 </div><!-- end of container -->
 </body>
 </html>
+
 
 
 
