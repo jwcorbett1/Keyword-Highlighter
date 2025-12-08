@@ -439,7 +439,7 @@ function styleMacro(style, match) {
 
     // limit next search to macro's valid scope
     // match[1] is capture group with macro token
-    const start = match.index + match[0].length
+    const start = match.index + match[0].length;
     search.set(
         start,
         findUndef(match[1], start, style));
@@ -667,7 +667,7 @@ function styleIdentifiers(style, action, phrase, regex, expand = false) {
 
         // if requested, expand phrase regex with new typedefs
         if (expand === true && tokens !== "") {
-            phrase = expandDataTypesRegex(tokens, phrase);
+            phrase = expandDataTypeRegex(tokens, phrase);
         }
     }
 
@@ -1029,7 +1029,7 @@ function downloadFile() {
         .replace(/<br>/g,         "")
         .replace(/<\/?div>/g,     "\n")  // handle abnormal newlines
         .replace(/&lt;/g,         "<")
-        .replace(/&gt;/g,         ">")
+        .replace(/&gt;/g,         ">");
 
     // create temporary download link
     const file    = new Blob([ fileData ], { type: fileType });
