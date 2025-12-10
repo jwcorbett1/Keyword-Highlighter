@@ -21,7 +21,7 @@ body, input {
     flex-direction: column;      /* toolbar above editbox */
     width:          85vw;
     height:         85vh;
-    margin:         1.5em auto;  /* center on screen */
+    margin:         1.5em auto;  /* center horizontally */
 }
 
 /* typing area */
@@ -74,7 +74,7 @@ body, input {
 // -----------------------------------------------------------------------------
 // keyword lists
 
-const preprocessor = [
+const preprocessorDirectives = [
     "define",
     "undef",
     "if",
@@ -145,25 +145,25 @@ const commentRegex = /\/\/.*?<\/?div>|\/\*.*?\*\//g;
 const numberRegex  = /(?<![A-Za-z_])\-?\.?\d[A-Za-z\d\-\.]*/g;
 
 // matches both character and string literals
-// allows for line continuation
+// also allows for line continuation
 const stringRegex =
     /(?:L|U|u|u8)?(['"]).*?(?<!\\<\/div>|.{6}\\)(?:\1|<div>)/g;
 
 const includeFileRegex  = /#\s*include\s+(&lt;.*?(?:&gt;|<\/?div>))/g;
 const macroRegex        = /#\s*define\s+([A-Za-z_]\w*)/g;
 const preprocessorRegex = new RegExp(
-    "#\\s*(?:" + preprocessor.join("|") + ")\\b", "g");
+    "#\\s*(?:" + preprocessorDirectives.join("|") + ")\\b", "g");
 
 const keywordRegex = new RegExp(
     "\\b(?:" + dataTypes.join("|") + "|" +
            otherKeywords.join("|") + ")\\b", "g");
 
-// both regexes match entire statement from data type to semicolon
+// both of these match entire statement from data type to semicolon
 const enumRegex     = /\benum\b[^;]*;/g;
 const dataTypeRegex = new RegExp(
     "\\b(?:" + dataTypes.join("|") + ")\\b[^;]*;", "g");
 
-// update data type regex to include typedef names
+// update data type regex to include newly found typedefs
 function expandDataTypeRegex(typedefs, previous) {
 
     const begin = "\\b(?:";
@@ -183,13 +183,13 @@ function expandDataTypeRegex(typedefs, previous) {
 // -------------------------------------
 
 // create regex from multiple patterns with whitespace in between
-function patternRegex(patterns, separated = false) {
+function createPatternRegex(patterns, separated = false) {
 
     let whitespace = "(?:\\s|<\\/?div>|<br>)";
-    if (separated === false) {
-        whitespace += "*";  // patterns might run together
-    } else {
+    if (separated === true) {
         whitespace += "+";  // whitespace is required
+    } else {
+        whitespace += "*";  // patterns might run together
     }
 
     let sequence = "\\b";
@@ -205,44 +205,44 @@ const identifierToken = "([A-Za-z_]\\w*)";
 
 // PATTERN: enum/struct/union followed by identifier
 // whitespace is required
-const tagTypeRegex = patternRegex(
+const tagTypeRegex = createPatternRegex(
     [ "(?:enum|struct|union)", identifierToken ], true);
 
 // PATTERN: identifier followed by open parenthesis
-const functionRegex = patternRegex(
+const functionRegex = createPatternRegex(
     [ identifierToken, "\\(" ]);
 
 // PATTERN: optional identifier followed by one of: {[=&,;
 // semicolon terminates declaration
-// ampersand needed to avoid matching HTML entities
-const variableRegex = patternRegex(
+// ampersand needed to avoid matching any HTML entities
+const variableRegex = createPatternRegex(
     [ identifierToken + "?", "([\\{\\[=&,;])" ]);
 
 // PATTERN: optional identifier followed by one of: [,)
 // closing parenthesis terminates declaration
-const parameterRegex = patternRegex(
+const parameterRegex = createPatternRegex(
     [ identifierToken + "?", "([\\[,\\)])" ]);
 
 // PATTERN: optional identifier followed by one of: =,}
 // closing brace terminates declaration
-const enumConstantRegex = patternRegex(
+const enumConstantRegex = createPatternRegex(
     [ identifierToken + "?", "([=,\\}])" ]);
 
-// PATTERN: identifier followed by (...) followed by open brace
-const localScopeRegex = patternRegex(
-    [ identifierToken, "\\([^\\)]*\\)", "\\{" ]);
+// PATTERN: identifier followed by text in parentheses and open brace
+const localScopeRegex = createPatternRegex(
+    [ identifierToken, "\\(.*?\\)", "\\{" ]);
 
 // -----------------------------------------------------------------------------
 // global data
 
-let text = "";  // text to be styled
+let text = "";  // current text to be styled
 
-// region of current text
+// specific region of current text
 class Scope {
 
     constructor(start = 0, stop = 0) {
         this.start = start;
-        this.stop  = stop;  // first index outside of scope
+        this.stop  = stop;  // equals first index outside of scope
     }
 
     set(start, stop) {
@@ -250,7 +250,7 @@ class Scope {
         this.stop  = stop;
     }
 
-    // target all text
+    // target entirety of current text
     clear() {
         this.start = 0;
         this.stop  = text.length;
@@ -262,48 +262,49 @@ class Style extends Scope {
 
     constructor(style, start, stop) {
         super(start, stop);
-        this.style = style;
+        this.style = style;  // used to create <span> tag
     }
 }
 
 const styles = [];           // array of Style objects
 const scope  = new Scope();  // indices of current local scope
-const search = new Scope();  // indices for next filter call
+const search = new Scope();  // indices for next filter function call
 
 // prepare for next styling pass
 function initializeGlobals(unstyled) {
 
     text          = unstyled;
-    styles.length = 0;
+    styles.length = 0;  // discard previous Style objects
     scope.clear();
     search.clear();
 }
 
-// construct finished text with current styling embedded
+// build finished text based on current styling
+// needs fresh copy of text without modifications
 function applyStyles(unstyled) {
 
     if (styles.length === 0) {
-        return unstyled;  // nothing to apply
+        return unstyled;  // no styles to apply
     }
 
-    // shorter name for String.substring() calls
+    // create shorter name for String.substring() calls
     const mid = unstyled.substring.bind(unstyled);
     styles.sort(function(a, b) {
         return a.start - b.start; });  // sort by starting index
 
-    let html = mid(0, styles[0].start);  // text before first styling
+    let html = mid(0, styles[0].start);  // text before first Style
     for (let i = 0; i < styles.length; i++) {
 
-        // wrap text region with styling tag
+        // wrap target text with <span> tag
         html += "<span class='" + styles[i].style + "'>" +
                 mid(styles[i].start, styles[i].stop)     +
                 "</span>";
 
-        // text between this styling and next styling
+        // copy text between current Style and next Style
         if (i + 1 < styles.length) {
             html += mid(styles[i].stop, styles[i + 1].start);
         } else {
-            html += mid(styles[i].stop);  // text after last styling
+            html += mid(styles[i].stop);  // text after last Style
         }
     }
 
@@ -311,20 +312,29 @@ function applyStyles(unstyled) {
 }
 
 // -----------------------------------------------------------------------------
-// style entire matches
+// style entire regex match
 
-// action functions are passed as arguments to filter functions
-// filter functions execute regex and call action for each match
-
-// ACTION: add to styles array, but prevent overlapping styles
-// most basic action that all other actions build upon
-function addStyle(style, start, stop) {
+// is region outside of any existing Style object?
+function canStyle(start, stop) {
 
     for (let i = 0; i < styles.length; i++) {
 
         if (start < styles[i].stop && stop > styles[i].start) {
-            return false;  // cannot add - style would overlap
+            return false;  // cannot style - regions would overlap
         }
+    }
+
+    return true;  // could style - no overlap
+}
+
+// action functions are passed as arguments to filter functions
+// filter functions execute regex and call action for each match found
+
+// ACTION: add to styles array, but prevent overlapping regions
+function addMatch(style, start, stop) {
+
+    if (canStyle(start, stop) === false) {
+        return false;  // cannot add - text already styled
     }
 
     styles.push(new Style(style, start, stop));
@@ -332,30 +342,38 @@ function addStyle(style, start, stop) {
 }
 
 // ACTION: add to styles array, but also account for line breaks
-function splitStyle(style, start, stop) {
+function splitMatch(style, start, stop) {
+
+    if (canStyle(start, stop) === false) {
+        return false;  // cannot add - text already styled
+    }
 
     // break regex match into lines
     const lines = text
         .substring(start, stop)
         .split(linebreakRegex)
         .filter(function(s) {
-            return s.length > 0; });
+            return s.length > 0; });  // remove empty strings
 
     stop = start;  // needed for first iteration
     for (let i = 0; i < lines.length; i++) {
 
-        // find this line in original text
+        // find current line in original text
         start = text.indexOf(lines[i], stop);
         stop  = start + lines[i].length;
 
-        addStyle(style, start, stop);  // try to add
+        styles.push(new Style(style, start, stop));  // add line
     }
+
+    return true;  // style(s) added successfully
 }
 
 // ACTION: add to styles array, but also hide from future searches
-function styleAndHide(style, start, stop) {
+function hideMatch(style, start, stop) {
 
-    splitStyle(style, start, stop);
+    if (splitMatch(style, start, stop) === false) {
+        return;  // cannot add - text already styled
+    }
 
     // replace regex match with spaces
     text = text.substring(0, start) +  // text before match
@@ -363,7 +381,7 @@ function styleAndHide(style, start, stop) {
            text.substring(stop);       // text after match
 }
 
-// FILTER: apply style using given action to each regex match
+// FILTER: apply style using given action for each regex match
 function styleMatches(style, action, regex) {
 
     regex.lastIndex = search.start;  // respect search scope
@@ -383,57 +401,61 @@ function styleMatches(style, action, regex) {
 }
 
 // use temporary regex to apply style to each match
+// "tokens" can be either single token or pre-joined string of tokens
 function quickStyle(style, tokens) {
 
     // confirm valid token list
     if (tokens !== "") {
 
         const regex = new RegExp("\\b(?:" + tokens + ")\\b", "g");
-        styleMatches(style, addStyle, regex);
+        styleMatches(style, addMatch, regex);
     }
 }
 
 // -----------------------------------------------------------------------------
-// style capture groups
+// style first capture group
 
-// ACTION: try to style capture group and report success/failure
-function tryStyle(style, match, token = match[1]) {
+// ACTION: try to style first capture group and report success/failure
+function addGroup(style, match) {
 
-    // remove any stray linebreaks included by regex
-    token = token.replace(linebreakRegex, "");
+    // extract token from match and remove any stray linebreaks
+    const token = match[1].replace(linebreakRegex, "");
 
-    // get location of token within main text
+    // find token within full text
     const start = match.index + match[0].indexOf(token);
     const stop  = start + token.length;
 
-    return addStyle(style, start, stop);  // try to style
+    return addMatch(style, start, stop);  // try to style
 }
 
-// search for #undef matching given token
+// search for #undef declaration matching given token
 function findUndef(token, start, style) {
 
-    // customize regex with provided token
-    const regex = new RegExp("#\\s*undef\\s+" + token + "\\b", "g");
-    regex.lastIndex = start;
+    // build regex around provided token
+    const regex = new RegExp("#\\s*undef\\s+(" + token + ")\\b", "g");
+
+    regex.lastIndex = start;  // start at end of original #define
 
     for (let match = regex.exec(text);
              match !== null;
              match = regex.exec(text)) {
 
-        // check if #undef outside comment/string/etc.
-        if (tryStyle(style, match, token)) {
-            return match.index;  // matching #undef found
+        // check if matching #undef is outside comment/string/etc.
+        if (addGroup(style, match) === true) {
+
+            // matching #undef found!
+            return match.index + match[0].length;
         }
     }
 
     return text.length;  // no matching #undef - use end of file
 }
 
-// ACTION: check potential macro and style within valid scope
-function styleMacro(style, match) {
+// ACTION: check potential macro and style within its valid scope
+function addMacro(style, match) {
 
     // check if macro defined outside comment/string/etc.
-    if (!tryStyle(style, match)) {
+    if (addGroup(style, match) === false) {
         return;  // macro not valid - text already styled
     }
 
@@ -446,41 +468,34 @@ function styleMacro(style, match) {
 
     // search for macro and apply style
     quickStyle(style, match[1]);
-    search.clear();  // remove search limit
+    search.clear();  // remove search limit set above
 }
 
 // ACTION: check potential function name and style if valid
-function styleFunction(style, match) {
+function addFunction(style, match) {
 
     // check if function name outside comment/string/etc.
-    if (!tryStyle(style, match)) {
-        return;  // name not valid - text already styled
+    if (addGroup(style, match) === false) {
+        return;  // function name not valid - text already styled
     }
 
     // match[1] is capture group with function name
     quickStyle(style, match[1]);
 }
 
-// FILTER: apply style using given action to first capture group
+// FILTER: apply style using given action for each regex match
 function styleGroups(style, action, regex) {
-
-    regex.lastIndex = search.start;  // respect search scope
 
     for (let match = regex.exec(text);
              match !== null;
              match = regex.exec(text)) {
-
-        const stop = match.index + match[0].length;
-        if (stop > search.stop) {
-            break;  // respect search scope
-        }
 
         action(style, match);
     }
 }
 
 // -----------------------------------------------------------------------------
-// style identifiers
+// style identifier tokens
 
 // find matching bracket/brace for symbol at starting index
 function findCloser(start, opener, closer) {
@@ -500,22 +515,32 @@ function findCloser(start, opener, closer) {
             start = text.length;  // nothing left to match
         }
 
-    // start less than stop only when current opener is nested
-    // if opener nested, current closer can't match original opener
+    // start is less than stop only when current opener is nested
+    // if nested, current closer cannot match with original opener
     } while (start < stop);
 
     // return index of matching closer or text.length if no match
     return stop;
 }
 
+// add token to array if outside any existing Style object's region
+function addToken(match, tokens) {
+
+    if (match[1] !== undefined &&  // token may have been optional
+        canStyle(
+            match.index,
+            match.index + match[1].length) === true) {
+
+        tokens.push(match[1]);  // add to provided array
+    }
+}
+
 // extract valid identifier tokens within current search region
 function findTokens(regex) {
 
     // collect tokens in local array
-    const tokens   = [];
-    let   canMatch = true;  // add this match?
-    const addMatch = function(m) {
-        if (m !== undefined) { tokens.push(m); } };
+    const tokens = [];
+    let   canAdd = true;  // add next token?
 
     regex.lastIndex = search.start;  // respect search scope
 
@@ -528,11 +553,10 @@ function findTokens(regex) {
             break;  // respect search scope
         }
 
-        let start;  // must be declared outside switch
-        switch (match[2]) {
+        let start;           // must be declared outside switch
+        switch (match[2]) {  // match[2] is symbol after token
 
-            // regex parameter determines which
-            // of these cases actually get used
+            // regex parameter limits which of these cases get used
 
             // skip any text inside braces
             case "{":
@@ -543,9 +567,9 @@ function findTokens(regex) {
             // add token in front of brackets
             // but skip any text inside brackets
             case "[":
-                if (canMatch === true) {  // first match only
-                    addMatch(match[1]);
-                    canMatch = false;
+                if (canAdd === true) {        // first match only
+                    addToken(match, tokens);  // add identifier token
+                    canAdd = false;
                 }
                 start           = regex.lastIndex - 1;
                 regex.lastIndex = findCloser(start, "[", "]") + 1;
@@ -553,54 +577,37 @@ function findTokens(regex) {
 
             // add token in front of equals sign
             case "=":
-                if (canMatch === true) {  // first match only
-                    addMatch(match[1]);
-                    canMatch = false;
+                if (canAdd === true) {        // first match only
+                    addToken(match, tokens);  // add identifier token
+                    canAdd = false;
                 }
                 break;
 
-            // nothing after ampersand is valid token
+            // nothing after ampersand is ever valid token
             case "&":
-                canMatch = false;  // disable matching
+                canAdd = false;  // disable matching
                 break;
 
             // add token in front of comma
             case ",":
-                if (canMatch === true) {  // first match only
-                    addMatch(match[1]);
+                if (canAdd === true) {        // first match only
+                    addToken(match, tokens);  // add identifier token
                 }
-                canMatch = true;  // reset matching flag
+                canAdd = true;  // reset matching flag
                 break;
 
             // add token in front of declaration terminator
             case ";":  // for variables and typedefs
             case ")":  // for parameters
             case "}":  // for enumerations
-                if (canMatch === true) {  // first match only
-                    addMatch(match[1]);
+                if (canAdd === true) {        // first match only
+                    addToken(match, tokens);  // add identifier token
                 }
                 return tokens;  // declaration finished
         }
-    }
+    }  // end of for loop
 
     return tokens;  // no declaration terminator found
-}
-
-// ACTION: extract typedefs from match - first parameter ignored
-function findTypedefs(unused, match, regex) {
-
-    // determine if match is actually typedef declaration
-    if (match[0].indexOf("typedef") !== -1) {
-
-        // extract list of typedefs
-        search.set(match.index, match.index + match[0].length);
-        const tokens = findTokens(regex);
-        search.clear();
-
-        return tokens;  // return list
-    }
-
-    return "";  // no new typedefs to return
 }
 
 // ACTION: find identifier tokens and style within current scope
@@ -674,6 +681,23 @@ function styleIdentifiers(style, action, phrase, regex, expand = false) {
     return phrase;  // needed for typedef handling
 }
 
+// ACTION: extract typedefs from match - first parameter ignored
+function findTypedefs(unused, match, regex) {
+
+    // determine if match is actually typedef declaration
+    if (match[0].indexOf("typedef") !== -1) {
+
+        // extract list of typedefs
+        search.set(match.index, match.index + match[0].length);
+        const tokens = findTokens(regex);
+        search.clear();
+
+        return tokens;  // return list
+    }
+
+    return "";  // no new typedefs to return
+}
+
 // find typedefs within current scope and update data type regex
 function findGlobalTypedefs(currentTypes) {
 
@@ -710,7 +734,7 @@ function offsetFromRange(editbox, range) {
     let node   = range.endContainer;
     let offset = range.endOffset;
 
-    if (node === editbox || !editbox.contains(node)) {
+    if (node === editbox || editbox.contains(node) === false) {
         return 0;  // selection outside editbox
     }
 
@@ -755,7 +779,7 @@ function rangeFromOffset(editbox, offset) {
     while (true) {
 
         const length = nodeLength(node);
-        if (offset >= length) {  // is offset past this node?
+        if (offset >= length) {  // is offset past current node?
 
             // should never happen, but just in case
             if (node.nextSibling === null) {
@@ -765,7 +789,7 @@ function rangeFromOffset(editbox, offset) {
             offset -= length;  // track offset remaining
             node    = node.nextSibling;
 
-        } else {  // offset within this node
+        } else {  // offset is within current node
 
             if (node.firstChild === null) {
                 break;  // already at bottom of hierarchy
@@ -781,7 +805,7 @@ function rangeFromOffset(editbox, offset) {
         node = node.firstChild;
     }
 
-    // create Range object representing this position
+    // create Range object representing current position
     return buildRange(node, offset);
 }
 
@@ -827,7 +851,7 @@ function styleLocalScopes() {
              match = localScopeRegex.exec(text)) {
 
         // confirm match is valid function
-        if (!tryStyle(match, "function")) {
+        if (addGroup("function", match) === false) {
             continue;
         }
         functions.push(match[1]);  // add name to list
@@ -856,7 +880,7 @@ function styleLocalScopes() {
 
     // style function names - both known and probable
     quickStyle( "function", functions.join("|"));
-    styleGroups("function", styleFunction, functionRegex);
+    styleGroups("function", addFunction, functionRegex);
     scope.clear();
 }
 
@@ -869,20 +893,20 @@ function styleEditbox() {
     initializeGlobals(unstyled);
 
     // style comments and hide from future searches
-    styleMatches("comment", styleAndHide, commentRegex);
+    styleMatches("comment", hideMatch, commentRegex);
 
     // style string and numeric literals
-    styleMatches("literal", splitStyle, stringRegex);
-    styleGroups( "literal", tryStyle,   includeFileRegex);
-    styleMatches("literal", addStyle,   numberRegex);
+    styleMatches("literal", splitMatch, stringRegex);
+    styleGroups( "literal", addGroup,   includeFileRegex);
+    styleMatches("literal", addMatch,   numberRegex);
 
     // style preprocessor directives, including macros
-    styleMatches("preprocessor", addStyle,   preprocessorRegex);
-    styleGroups( "macro",        styleMacro, macroRegex);
+    styleMatches("preprocessor", addMatch, preprocessorRegex);
+    styleGroups( "macro",        addMacro, macroRegex);
 
     // style keywords and tag types
-    styleMatches("keyword", addStyle, keywordRegex);
-    styleGroups( "tagType", tryStyle, tagTypeRegex);
+    styleMatches("keyword", addMatch, keywordRegex);
+    styleGroups( "tagType", addGroup, tagTypeRegex);
 
     // style local identifiers and function names
     styleLocalScopes();
@@ -925,7 +949,7 @@ function dropChanges() {
 // BUTTON ACTION: delete contents of typing area
 function clearEditbox() {
 
-    if (!dropChanges()) {
+    if (dropChanges() === false) {
         return;
     }
 
@@ -940,7 +964,7 @@ function clearEditbox() {
 // BUTTON ACTION: open file picker dialog box
 function selectFile() {
 
-    if (!dropChanges()) {
+    if (dropChanges() === false) {
         return;
     }
 
@@ -964,7 +988,7 @@ function uploadFile() {
     }
     document.getElementById("filename").value = filename;
 
-    // create and initialize file reader
+    // create and initialize file reader object
     const fileReader = new FileReader();
     fileReader.addEventListener("load", function() {
 
@@ -1052,9 +1076,9 @@ function downloadFile() {
 // EVENT LISTENER: triggered by trying to leave page
 function exitPage(event) {
 
-    if (hasChanges) {
+    if (hasChanges === true) {
 
-        if (event.preventDefault) {
+        if (typeof event.preventDefault === "function") {
             event.preventDefault();         // for newer browsers
         } else {
             event.returnValue = "confirm";  // for older browsers
