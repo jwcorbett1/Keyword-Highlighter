@@ -142,7 +142,7 @@ const linebreakRegex = /<\/?div>|<br>/;  // global flag not needed
 
 // matches both single and multi-line comments
 const commentRegex = /\/\/.*?<\/?div>|\/\*.*?\*\//g;
-const numberRegex  = /(?<![A-Za-z_])\-?\.?\d[A-Za-z\d\-\.]*/g;
+const numberRegex  = /(?<![A-Za-z_])-?\.?\d[A-Za-z\d.-]*/g;
 
 // matches both character and string literals
 // also allows for line continuation
@@ -185,14 +185,14 @@ function expandDataTypeRegex(typedefs, previous) {
 // create regex from multiple patterns with whitespace in between
 function createPatternRegex(patterns, separated = false) {
 
-    let whitespace = "(?:\\s|<\\/?div>|<br>)";
+    let whitespace = "(?:\\s|</?div>|<br>)";
     if (separated === true) {
         whitespace += "+";  // whitespace is required
     } else {
         whitespace += "*";  // patterns might run together
     }
 
-    let sequence = "\\b";
+    let sequence = "";
     for (let i = 0; i < patterns.length - 1; i++) {
         sequence += patterns[i] + whitespace;
     }
@@ -201,36 +201,41 @@ function createPatternRegex(patterns, separated = false) {
 }
 
 // pattern for capturing identifier tokens
-const identifierToken = "([A-Za-z_]\\w*)";
+const identifierToken = "\\b([A-Za-z_]\\w*)";
 
 // PATTERN: enum/struct/union followed by identifier
 // whitespace is required
 const tagTypeRegex = createPatternRegex(
-    [ "(?:enum|struct|union)", identifierToken ], true);
-
-// PATTERN: identifier followed by open parenthesis
-const functionRegex = createPatternRegex(
-    [ identifierToken, "\\(" ]);
+    [ "\\b(?:enum|struct|union)", identifierToken ], true);
 
 // PATTERN: optional identifier followed by one of: {[=&,;
 // semicolon terminates declaration
 // ampersand needed to avoid matching any HTML entities
 const variableRegex = createPatternRegex(
-    [ identifierToken + "?", "([\\{\\[=&,;])" ]);
+    [ identifierToken + "?", "([{[=&,;])" ]);
 
 // PATTERN: optional identifier followed by one of: [,)
-// closing parenthesis terminates declaration
+// closed parenthesis terminates declaration
 const parameterRegex = createPatternRegex(
-    [ identifierToken + "?", "([\\[,\\)])" ]);
+    [ identifierToken + "?", "([[,)])" ]);
 
 // PATTERN: optional identifier followed by one of: =,}
-// closing brace terminates declaration
+// closed brace terminates declaration
 const enumConstantRegex = createPatternRegex(
-    [ identifierToken + "?", "([=,\\}])" ]);
+    [ identifierToken + "?", "([=,}])" ]);
+
+// PATTERN: identifier followed by open parenthesis
+const functionRegex = createPatternRegex(
+    [ identifierToken, "\\(" ]);
+
+// PATTERN: open parenthesis followed by asterisk, identifier,
+//              closed parenthesis, and second open parenthesis
+const funcPointerRegex = createPatternRegex(
+    [ "\\([^*)]*\\*", identifierToken, "\\)", "\\(" ]);
 
 // PATTERN: identifier followed by text in parentheses and open brace
 const localScopeRegex = createPatternRegex(
-    [ identifierToken, "\\([^\\)]*\\)", "\\{" ]);
+    [ identifierToken, "\\([^)]*\\)", "\\{" ]);
 
 // -----------------------------------------------------------------------------
 // global data
@@ -274,7 +279,7 @@ const search = new Scope();  // indices for next filter function call
 function initializeGlobals(unstyled) {
 
     text          = unstyled;
-    styles.length = 0;  // discard previous Style objects
+    styles.length = 0;   // discard previous Style objects
     scope.clear();
     search.clear();
 }
@@ -390,13 +395,12 @@ function styleMatches(style, action, regex) {
              match !== null;
              match = regex.exec(text)) {
 
-        const start = match.index;
-        const stop  = start + match[0].length;
+        const stop  = match.index + match[0].length;
         if (stop > search.stop) {
             break;  // respect search scope
         }
 
-        action(style, start, stop);
+        action(style, match.index, stop);
     }
 }
 
@@ -404,7 +408,7 @@ function styleMatches(style, action, regex) {
 // "tokens" can be either single token or pre-joined string of tokens
 function quickStyle(style, tokens) {
 
-    // confirm valid token list
+    // confirm valid token list provided
     if (tokens !== "") {
 
         const regex = new RegExp("\\b(?:" + tokens + ")\\b", "g");
@@ -440,11 +444,11 @@ function findUndef(token, start, style) {
              match !== null;
              match = regex.exec(text)) {
 
-        // check if matching #undef is outside comment/string/etc.
+        // confirm matching #undef is outside comment/string/etc.
         if (addGroup(style, match) === true) {
 
             // matching #undef found!
-            return match.index + match[0].length;
+            return match.index;
         }
     }
 
@@ -497,30 +501,31 @@ function styleGroups(style, action, regex) {
 // -----------------------------------------------------------------------------
 // style identifier tokens
 
-// find matching bracket/brace for symbol at starting index
+// find matching bracket/brace for symbol just before starting index
 function findCloser(start, opener, closer) {
 
+    start--;           // back up to original opener
     let stop = start;  // needed for first iteration
     do {
 
         // find next closing symbol
         stop = text.indexOf(closer, stop + closer.length);
         if (stop === -1) {
-            stop = text.length;  // nothing left to match
+            stop = text.length - 1;  // nothing left to match
         }
 
         // find next opening symbol
         start = text.indexOf(opener, start + opener.length);
         if (start === -1) {
-            start = text.length;  // nothing left to match
+            start = text.length - 1;  // nothing left to match
         }
 
     // start is less than stop only when current opener is nested
     // if nested, current closer cannot match with original opener
     } while (start < stop);
 
-    // return index of matching closer or text.length if no match
-    return stop;
+    // return index after matching closer, or text.length if no match
+    return stop + 1;
 }
 
 // add token to array if outside any existing Style object's region
@@ -554,15 +559,13 @@ function findTokens(regex) {
             break;  // respect search scope
         }
 
-        let start;           // must be declared outside switch
         switch (match[2]) {  // match[2] is symbol after token
 
             // regex parameter limits which of these cases get used
 
             // skip any text inside braces
             case "{":
-                start           = regex.lastIndex - 1;
-                regex.lastIndex = findCloser(start, "{", "}") + 1;
+                regex.lastIndex = findCloser(regex.lastIndex, "{", "}");
                 break;
 
             // add token in front of brackets
@@ -572,8 +575,7 @@ function findTokens(regex) {
                     addToken(match, tokens);  // add identifier token
                     canAdd = false;
                 }
-                start           = regex.lastIndex - 1;
-                regex.lastIndex = findCloser(start, "[", "]") + 1;
+                regex.lastIndex = findCloser(regex.lastIndex, "[", "]");
                 break;
 
             // add token in front of equals sign
@@ -815,6 +817,43 @@ function maintainCaret(editbox, html) {
 // -----------------------------------------------------------------------------
 // style editbox
 
+// simplify function pointers to look like other variables
+function sanitizeFunctionPointers() {
+
+    // find next potential function pointer in file
+    for (let match = funcPointerRegex.exec(text);
+             match !== null;
+             match = funcPointerRegex.exec(text)) {
+
+        // get length of prefix, and start and stop indices
+        const prefix = match[0].indexOf(match[1]);
+        const start  = match.index + prefix;     // beginning of token
+        const stop   = start + match[1].length;  // end of token
+
+        // check if matching token is valid function pointer
+        if (canStyle(start, stop) === false) {
+
+            // if not valid, resume search at end of invalid token
+            funcPointerRegex.lastIndex = stop;
+            continue;
+        }
+
+        // get length of suffix and index for end of declaration
+        const closer = findCloser(funcPointerRegex.lastIndex, "(", ")");
+        const suffix = closer - stop;
+
+        alert("text length = " + text.length + ", closer = " + closer);
+
+        // replace function pointer prefix and suffix with spaces
+        // keep token and text before/after match unchanged
+        text = text.substring(0, match.index) +     // before match
+               " ".repeat(prefix) +  match[1] + " ".repeat(suffix) +
+               text.substring(closer);              // after match
+
+        alert(text);
+    }
+}
+
 // style function names and identifiers with local scope
 function styleLocalScopes() {
 
@@ -827,7 +866,7 @@ function styleLocalScopes() {
              match !== null;
              match = localScopeRegex.exec(text)) {
 
-        // confirm match is valid function
+        // check if match is valid function
         if (addGroup("function", match) === false) {
 
             // if not valid, resume search at end of invalid token
@@ -839,15 +878,15 @@ function styleLocalScopes() {
         // find global typedefs between previous and current scopes
         scope.set(stop, match.index);
         currentTypes = styleIdentifiers(
-            "",             // style parameter ignored
+            "",             // parameter ignored by findTypedefs()
             findTypedefs,
             currentTypes,
             variableRegex,  // typedefs look like variable declarations
             true);          // expand data type regex and return result
 
         // move scope to function's body
-        stop = findCloser(localScopeRegex.lastIndex - 1, "{", "}");
-        scope.set(localScopeRegex.lastIndex, stop);
+        stop = findCloser(localScopeRegex.lastIndex, "{", "}");
+        scope.set(localScopeRegex.lastIndex, stop - 1);
 
         // style parameters and local enumerations
         styleTokens("parameter", match, parameterRegex);
@@ -860,7 +899,6 @@ function styleLocalScopes() {
             styleVariables, currentTypes, variableRegex, true);
 
         // resume search at end of local scope
-        stop++;  // step out of current function
         localScopeRegex.lastIndex = stop;
     }
 
@@ -895,6 +933,7 @@ function styleEditbox() {
     styleGroups( "tagType", addGroup, tagTypeRegex);
 
     // style local identifiers and function names
+    sanitizeFunctionPointers();  // simplify function pointers first
     styleLocalScopes();
 
     // style global enumerations
