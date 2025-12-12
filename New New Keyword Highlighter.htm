@@ -230,7 +230,7 @@ const functionRegex = createPatternRegex(
 
 // PATTERN: open parenthesis followed by asterisk, identifier,
 //              closed parenthesis, and second open parenthesis
-const funcPointerRegex = createPatternRegex(
+const callbackRegex = createPatternRegex(
     [ "\\([^*)]*\\*", identifierToken, "\\)", "\\(" ]);
 
 // PATTERN: identifier followed by text in parentheses and open brace
@@ -821,9 +821,9 @@ function maintainCaret(editbox, html) {
 function sanitizeFunctionPointers() {
 
     // find next potential function pointer in file
-    for (let match = funcPointerRegex.exec(text);
+    for (let match = callbackRegex.exec(text);
              match !== null;
-             match = funcPointerRegex.exec(text)) {
+             match = callbackRegex.exec(text)) {
 
         // get length of prefix, and start and stop indices
         const prefix = match[0].indexOf(match[1]);
@@ -834,12 +834,12 @@ function sanitizeFunctionPointers() {
         if (canStyle(start, stop) === false) {
 
             // if not valid, resume search at end of invalid token
-            funcPointerRegex.lastIndex = stop;
+            callbackRegex.lastIndex = stop;
             continue;
         }
 
         // get length of suffix and index for end of declaration
-        const closer = findCloser(funcPointerRegex.lastIndex, "(", ")");
+        const closer = findCloser(callbackRegex.lastIndex, "(", ")");
         const suffix = closer - stop;
 
         alert("text length = " + text.length + ", closer = " + closer);
@@ -1165,3 +1165,4 @@ function initializePage() {
 </div><!-- end of container -->
 </body>
 </html>
+
