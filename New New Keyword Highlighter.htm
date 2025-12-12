@@ -55,18 +55,18 @@ body, input {
 /* -------------------------------------------------------------------------- */
 /* colors for keywords, literals, variables, etc. */
 
-.keyword        { color: #2000FF; }  /* blue      */
-.literal        { color: #D03720; }  /* red       */
-.localVariable  { color: #FF8040; }  /* coral-ish */
-.globalVariable { color: #D08050; }  /* red brown */
-.tagType        { color: #20C0C0; }  /* cyan      */
-.enumConstant   { color: #8020C0; }  /* purple    */
-.typedef        { color: #20C0C0; }  /* cyan      */
-.function       { color: #FFA020; }  /* orange    */
-.parameter      { color: #FF8080; }  /* pink      */
-.preprocessor   { color: #909090; }  /* gray      */
-.macro          { color: #8020C0; }  /* purple    */
-.comment        { color: #20B020; }  /* green     */
+.keyword        { color: #2020E7; }  /* blue   */
+.literal        { color: #D00000; }  /* red    */
+.localVariable  { color: #C08000; }  /* gold   */
+.globalVariable { color: #775000; }  /* brown  */
+.tagType        { color: #20A0A0; }  /* cyan   */
+.enumConstant   { color: #7710B0; }  /* purple */
+.typedef        { color: #20A0A0; }  /* cyan   */
+.function       { color: #D00000; }  /* red    */
+.parameter      { color: #C08000; }  /* gold   */
+.preprocessor   { color: #636363; }  /* gray   */
+.macro          { color: #7710B0; }  /* purple */
+.comment        { color: #008000; }  /* green  */
 
 /* -------------------------------------------------------------------------- */
     </style>
@@ -141,7 +141,7 @@ const stylingRegex   = /<\/?span[^>]*>|<\/?font[^>]*>/g;
 const linebreakRegex = /<\/?div>|<br>/;  // global flag not needed
 
 // matches both single and multi-line comments
-const commentRegex = /\/\/.*?<\/?div>|\/\*.*?\*\//g;
+const commentRegex = /\/\/.*?(?:<\/?div>|$)|\/\*.*?\*\//g;
 const numberRegex  = /(?<![A-Za-z_])-?\.?\d[A-Za-z\d.-]*/g;
 
 // matches both character and string literals
@@ -908,6 +908,8 @@ function styleLocalScopes() {
     scope.clear();
 }
 
+// -------------------------------------
+
 // update styling for text current entered in typing area
 function styleEditbox() {
 
@@ -1165,4 +1167,3 @@ function initializePage() {
 </div><!-- end of container -->
 </body>
 </html>
-
