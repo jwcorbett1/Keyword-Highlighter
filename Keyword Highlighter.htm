@@ -11,1358 +11,1210 @@
     <style>
 /* -------------------------------------------------------------------------- */
 
-/* font settings for all text and controls */
 body, input {
     font-family: "Courier New", Courier, monospace;
+    font-size:   12pt;
 }
 
 /* top-level flexbox */
-.viewPort {
+#container {
     display:        flex;
-    flex-direction: column;
+    flex-direction: column;      /* toolbar above editbox */
     width:          85vw;
     height:         85vh;
-    margin:         1.5em auto 0;
-    padding:        0;
+    margin:         1.5em auto;  /* center horizontally */
 }
 
-#editBox {
-    flex-grow:   1;     /* fill majority of viewport */
+/* typing area */
+#editbox {
+    flex-grow:   1;     /* fill majority of flexbox */
     white-space: preserve nowrap;
     overflow:    auto;  /* add scrollbars if/when needed */
+    padding:     0.6em 0.8em;
     border:      0.1em solid black;
     outline:     none;
-    margin:      0;
-    padding:     0.6em 0.8em;
 }
 
-.toolBar {
+/* container for interface controls */
+#toolbar {
     flex-grow: 0;  /* minimize footprint */
-    margin:    0;
-    padding:   0 0 0.7em;
 }
 
-/* invisible and hidden behind other controls */
+/* hidden behind other controls */
 #filePicker {
     position: absolute;
     z-index:  -1;
-    opacity:  0;
+    opacity:  0;  /* also invisible */
 }
 
-#fileName {
-    width: 40em;
+#filename {
+    width:   40em;
+    outline: none;
+    margin:  0 0 0.8em;  /* add space between toolbar and editbox */
 }
 
 /* -------------------------------------------------------------------------- */
-/* colors to use for each type of token */
+/* colors for keywords, literals, variables, etc. */
 
-.comment {
-    color: green;
-}
+#editbox { background-color: #F9F9F9; }  /* off white */
 
-.literal {
-    color: red;
-}
-
-.keyword {
-    color: blue;
-}
-
-.preprocessor {
-    color: gray;
-}
-
-.macro {
-    color: purple;
-}
-
-.function {
-    color: orange;
-}
-
-.variable {
-    color: magenta;
-}
-
-.userDefined {
-    color: cyan;
-}
+.keyword        { color: #1010FF; }  /* blue   */
+.literal        { color: #D00000; }  /* red    */
+.localVariable  { color: #E717E7; }  /* pink   */
+.globalVariable { color: #E76700; }  /* orange */
+.tagType        { color: #009797; }  /* teal   */
+.enumConstant   { color: #9000C0; }  /* purple */
+.typedef        { color: #009797; }  /* teal   */
+.function       { color: #E76700; }  /* orange */
+.parameter      { color: #6B6B6B; }  /* gray   */
+.preprocessor   { color: #6B6B6B; }  /* gray   */
+.macro          { color: #9000C0; }  /* purple */
+.comment        { color: #009000; }  /* green  */
 
 /* -------------------------------------------------------------------------- */
     </style>
     <script>
 // -----------------------------------------------------------------------------
-// keywords divided up by handling needs
-
-// #define handled separately
-const preprocessor = [
-    "#elif",
-    "#else",
-    "#endif",
-    "#error",
-    "#if",
-    "#ifdef",
-    "#ifndef",
-    "#include",
-    "#pragma",
-    "#undef"
-];
-
-// typedef handled separately
-const keyword = [
-    "auto",
-    "break",
-    "case",
-    "const",
-    "continue",
-    "default",
-    "do",
-    "else",
-    "extern",
-    "for",
-    "goto",
-    "if",
-    "register",
-    "return",
-    "sizeof",
-    "static",
-    "switch",
-    "volatile",
-    "while"
-];
-
-const dataType = [
-    "bool",
-    "char",
-    "double",
-    "float",
-    "int",
-    "long",
-    "short",
-    "signed",
-    "unsigned",
-    "void",
-    "wchar_t"
-];
-
-const composite = [
-    "enum",
-    "struct",
-    "union"
-];
-
-// -----------------------------------------------------------------------------
-
-// base-level data structure
-class Styling {
-
-    constructor(style, start, stop) {
-
-        this.style = style;
-        this.start = start;  // first index to apply style
-        this.stop  = stop;   // first index to stop applying style
-    }
-}
-
-// return index of Styling data immediately before a position
-function findLastIndexBefore(styles, index) {
-
-    if (styles.length === 0 || styles[0].stop > index) {
-        return -1;
-    }
-
-    let i = 0;
-    while (i + 1 < styles.length && styles[i + 1].stop <= index) {
-        i++;
-    }
-
-    return i;
-}
-
-// embed Styling data into text and return result
-function buildStyledHTML(text, styles) {
-
-    // sort array by start index
-    styles.sort(function(a, b) { return a.start - b.start; });
-
-    let html = text.substring(0, styles[0].start);  // before any styling
-    for (let i = 0; i < styles.length; i++) {
-
-        html += "<span class='" + styles[i].style + "'>" +
-                text.substring(styles[i].start, styles[i].stop) +
-                "</span>";
-
-        if (i + 1 < styles.length) {
-            html += text.substring(styles[i].stop, styles[i + 1].start);
-        } else {
-            html += text.substring(styles[i].stop);  // until end of text
-        }
-    }
-
-    return html;
-}
-
-// -----------------------------------------------------------------------------
-
-// builder to apply styling step-by-step
-class StyleBuilder {
-
-    constructor(html) {
-
-        this.original = html;  // copy for creating styled HTML
-        this.edited   = html;  // copy without "hidden" text
-        this.styling  = [];    // holds Styling objects
-
-        // range to use for regex searches
-        this.startAt  = 0;            // first index to start searching
-        this.stopAt   = html.length;  // first index to stop searching
-    }
-
-    // ---------------------------------
-
-    // in future, search only part of edited string
-    setScope(startAt, stopAt) {
-
-        this.startAt = startAt;
-        this.stopAt  = stopAt;
-    }
-
-    // in future, search entire edited string
-    clearScope() {
-
-        this.startAt = 0;
-        this.stopAt  = this.original.length;
-    }
-
-    // ---------------------------------
-
-    addStyling(style, start, stop) {
-
-        // check if start/stop overlaps existing styling
-        for (let i = 0; i < this.styling.length; i++) {
-
-            if (start < this.styling[i].stop &&
-                this.styling[i].start < stop) {
-
-                return;  // overlap not allowed!
-            }
-        }
-
-        this.styling.push(new Styling(style, start, stop));
-    }
-
-    // remove all Styling objects with this style
-    removeStyling(style) {
-
-        this.styling = this.styling
-            .filter(function(s) { return s.style !== style; });
-    }
-
-    // ---------------------------------
-
-    // add styling, but skip over regex matches
-    splitStyling(style, start, stop, regex) {
-
-        const segments = this.edited
-            .substring(start, stop)
-            .split(regex)
-            .filter(function(s) { return s.length > 0; });
-
-        stop = start;  // no previous match
-        for (let i = 0; i < segments.length; i++) {
-
-            // find match after end of previous match
-            start = this.edited.indexOf(segments[i], stop);
-            stop  = start + segments[i].length;
-
-            this.addStyling(style, start, stop);
-        }
-    }
-
-    // replace text with same number of filler characters
-    hideRange(start, stop, begin = "", end = "") {
-
-        this.edited =
-            this.edited.substring(0, start) +
-            begin +  // optional - marks beginning of deletion
-            " ".repeat((stop - start) - (begin.length + end.length)) +
-            end +    // optional - marks end of deletion
-            this.edited.substring(stop);
-    }
-
-    // add styling to and/or hide regex matches
-    // beginMark = "" and endMark = "" will fully hide matches
-    // only searches between this.startAt and this.stopAt
-    updateMatchedText(regex, style = "",
-        splitRegex = null, beginMark = null, endMark = null) {
-
-        regex.lastIndex = this.startAt;
-
-        for (let match = regex.exec(this.edited);
-                 match !== null;
-                 match = regex.exec(this.edited)) {
-
-            const start = match.index;
-            const stop  = start + match[0].length;
-
-            if (stop > this.stopAt) {
-                break;
-            }
-
-            if (style !== "") {
-                if (splitRegex === null) {
-                    this.addStyling(style, start, stop);
-                } else {
-                    this.splitStyling(style, start, stop, splitRegex);
-                }
-            }
-
-            if (beginMark !== null) {
-                this.hideRange(start, stop, beginMark, endMark);
-            }
-        }
-    }
-
-    // ---------------------------------
-
-    // add styling to each capture group at same time
-    // styles = ["", "example"] only styles 2nd capture group
-    addCaptureGroups(match, styles) {
-
-        for (let i = 0;
-                 i < styles.length && i + 1 < match.length;
-                 i++) {
-
-            if (styles[i] !== "") {
-
-                const start = match.index +
-                              match[0].indexOf(match[i + 1]);
-
-                this.addStyling(
-                    styles[i],
-                    start,
-                    start + match[i + 1].length);
-            }
-        }
-    }
-
-    // builds list of unique capture group results with each call
-    // groups = [null, [] ] only records 2nd capture group results
-    addUniqueCaptures(match, groups) {
-
-        for (let i = 0;
-                 i < groups.length && i + 1 < match.length;
-                 i++) {
-
-            if (groups[i] !== null && !groups[i].includes(match[i + 1])) {
-
-                groups[i].push(match[i + 1]);
-            }
-        }
-    }
-
-    // add styling to and/or build list of capture group matches
-    // only searches between this.startAt and this.stopAt
-    findCaptureGroups(regex, styles = null, groups = null) {
-
-        regex.lastIndex = this.startAt;
-
-        for (let match = regex.exec(this.edited);
-                 match !== null &&
-                 match.index + match[0].length <= this.stopAt;
-                 match = regex.exec(this.edited)) {
-
-            if (styles !== null) {
-                this.addCaptureGroups(match, styles);
-            }
-
-            if (groups !== null) {
-                this.addUniqueCaptures(match, groups);
-            }
-        }
-    }
-
-    // ---------------------------------
-
-    // embed current styling into original HTML and return result
-    buildStyledHTML() {
-
-        if (this.styling.length === 0) {
-            return this.original;
-        }
-
-        return buildStyledHTML(this.original, this.styling);
-    }
-}
-
-// -----------------------------------------------------------------------------
-/*
-
-find and erase whitespace/html
-find and erase comments
-find and erase character/string literals - end of line or line continuation
-
-find integer/floating-point literals
-find pre-processor commands
-find keywords
-find function/struct/enum/union definitions
-
-list pre-processor defines
-list functions and parameters
-list local variables
-list global variables
-list typedefs
-
-function findClosingDelimiter(text, opensAt, opener, closer) {
-
-    let closesAt = opensAt;
-    do {
-
-        closesAt = text.indexOf(closer, closesAt + closer.length);
-        if (closesAt < 0) {
-            closesAt = text.length;
-        }
-
-        opensAt = text.indexOf(opener, opensAt + opener.length);
-        if (opensAt < 0) {
-            opensAt = text.length;
-        }
-
-    } while (opensAt < closesAt);
-
-    return closesAt;
-}
-
-class CodeBlock {
-
-    constructor(opensAt, closesAt) {
-
-        this.opensAt    = opensAt;
-        this.closesAt   = closesAt;
-        this.name       = "";
-        this.parameters = [];
-    }
-
-    setParameters(parameters) {
-
-        const getParameter = /([A-Za-z_]\w*)\s*$/;
-
-        this.parameters = parameters.split(",");
-        let i = 0;
-        while (i < this.parameters.length) {
-
-            const groups = getParameter.exec(this.parameters[i]);
-            if (groups === null) {
-                this.parameters.splice(i, 1);
-                continue;
-            }
-
-            this.parameters[i] = groups[1];
-            i++;
-        }
-    }
-}
-
-function findCodeBlocks(string, keywords) {
-
-    const getDetails = /([A-Za-z_]\w*)(?:\s*\(([^\)]*)\))?\s*\{/g;
-
-    let   groups = getDetails.exec(string);
-    const blocks = [];
-
-    let closesAt;
-    for (let opensAt = string.indexOf("{");
-             opensAt !== -1;
-             opensAt = string.indexOf("{", closesAt + 1)) {
-
-        closesAt = findClosingDelimiter(string, opensAt, "{", "}");
-        blocks.push(new CodeBlock(opensAt, closesAt));
-
-        while (groups !== null &&
-               getDetails.lastIndex < blocks.at(-1).opensAt + 1) {
-            groups = getDetails.exec(string);
-        }
-
-        if (getDetails.lastIndex === blocks.at(-1).opensAt + 1 &&
-            !keywords.includes(groups[1])) {
-
-            blocks.at(-1).name = groups[1];
-            if (groups.length > 2) {
-                blocks.at(-1).setParameters(groups[2]);
-            }
-        }
-    }
-
-    return blocks;
-}
-
-while top level
-    check each function tag
-    scope to parameter list
-    get list of parameter names
-    if immediately before function body
-        *scope to function body
-        *get list of local variables
-        merge with list of parameter names
-        scope to parameter list + function body
-    color-code local variables
-
-
-
-color-code all comments - hide
-    single line
-    multi-line
-color-code all literals - obfusticate
-    character
-    string
-    integer
-    floating point
-color-code all preprocessor directives - obfusticate
-    create list of macro names - color-code, but scoped
-    update list based on #undef
-color-code all keywords - obfusticate
-
-
-for each code segment:
-----------------------
-color-code function names
-    create list of function names
-find struct, enum, and union names - split struct/union from enum
-    handle anonymous composites
-    handle nested composites - inside each other and inside functions
-    update global/local lists of composite names - color-code
-    update global/local lists of enum item names - color-code
-find parameter and variable names
-    handle known data types
-    handle typedefs
-    update global/local lists of parameter/variable names - color-code
-    update global/local lists of typedef names - color-code
-
-
-class ScopeBlock {
-
-    constructor() {
-        this.type  = type;  // function or enum
-        this.start = start;
-        this.stop  = stop;
-    }
-}
-
-
-class ScopedName {
-
-    constructor(token, style, start, stop) {
-        this.token = token;  // what to match
-        this.style = style;  // style to use when matched
-        this.start = start;  // where token first declared
-        this.stop  = stop;   // defaults to string.length
-    }
-}
-
-
-
-color-code single line comments
-color-code multi-line comments
-color-code character literals
-color-code string literals
-color-code integer and floating-point literals
-color-code preprocessor directives
-locate #defines, for each with macro:
-    locate matching #undef
-    color-code macro name between #define and #undef (or end of text)
-color-code keywords
-
-scope object:
-    has start
-    has end
-
-create array for function scope objects
-locate functions, for each:
-    color-code function name throughout text
-    if exists function body:
-        add to function scope array
-    if exists parameter list:
-        color-code parameter names within list (plus function body if exists)
-
-create array for definition scope objects
-locate structs, unions, and enums, for each:
-    color-code name immediately after keyword
-    if exists body:
-        add to definition scope array
-
-token object extends scope object:
-    adds text
-    adds style
-
-create array for style token objects
-locate enums, for each:
-    if enum within function scope, end is end of scope, else end is end of text
-    locate enum item names, for each:
-        add to style token array with appropriate end
-
-create array for type token objects
-locate typedefs, for each:
-    if typedef within local scope, end is end of scope, else end is end of text
-    add to style token array with appropriate end
-    add to type token array with appropriate end
-
-
-
-
-
-
-color-code single line and multi-line comments
-color-code character literals and string literals
-color-code integer and floating-point literals
-color-code preprocessor directives
-locate #includes, for each with file:
-    color-code file name within angle brackets same as string literal
-locate #defines, for each with macro:
-    locate matching #undef
-    color-code macro name between #define and #undef (or end of text)
-color-code keywords
-
-scope object:
-    has start
-    has end
-
-create array for definition scope objects - for typedefs and variables
-locate structs, unions, and enums, for each:
-    color-code name immediately after keyword
-    if exists body:
-        add to definition scope array
-
-token object extends scope object:
-    adds text
-    adds style
-    adds local/global flag
-
-create array for function scope objects
-create array for style token objects
-locate functions, for each:
-    add name to style token array as global
-    if exists function body:
-        add to function scope array
-    if exists parameter list:
-        locate parameter list names, for each:
-            add to style token array as local (include list indices)
-locate enums again, for each:
-    if enum within function scope, use local, else use global
-    locate enum item names, for each:
-        add to style token array as local/global
-
-create temp version of text with definition scope objects hidden
-create array for type token objects
-locate typedefs, for each:
-    if typedef within function scope, use local, else use global
-    add to type token array as local/global
-create regex for all known data types:
-    include keyword types, struct/union/enum/typedef, and all typedef types
-locate possible variables, for each:
-    if contains keyword typedef, discard
-    if using typedef type but type not in scope, discard
-
-
+// keyword lists
 
 const preprocessorDirectives = [
     "define",
-    "elif",
-    "elifdef",
-    "elifndef",
-    "else",
-    "embed",
-    "endif",
-    "error",
+    "undef",
     "if",
     "ifdef",
     "ifndef",
+    "else",
+    "elif",
+    "elifdef",
+    "elifndef",
+    "endif",
     "include",
+    "embed",
+    "warning",
+    "error",
     "line",
-    "pragma",
-    "undef",
-    "warning"
+    "pragma"
 ];
 
-const keywords = [
+const dataTypes = [
+    "int",
+    "short",
+    "long",
+    "signed",
+    "unsigned",
+    "float",
+    "double",
+    "char",
+    "wchar_t",
+    "bool",
+    "void",
+    "struct",
+    "union",
+    "enum",
+    "typedef"
 ];
 
-const lineBreakRegex      = /<\/?div>|<br>/;
-const commentRegex        = /\/\/.*?<\/?div>|\/\*.*?\*\//g;
-const numericLiteralRegex = /-?\.?\d[A-Za-z\d.-]*/g;             /*
-const textLiteralRegex    =
-    /\w{0,3}(['"]).*?(?<!\\<\/div>|.{6}\\)(?:\1|<div>)/g;
+const otherKeywords = [
+    "auto",
+    "const",
+    "static",
+    "extern",
+    "register",
+    "volatile",
+    "if",
+    "else",
+    "switch",
+    "case",
+    "default",
+    "break",
+    "do",
+    "while",
+    "for",
+    "continue",
+    "sizeof",
+    "goto",
+    "return"
+];
+
+// -----------------------------------------------------------------------------
+// regular expressions
+
+const filenameRegex  = /[\\\/:*?"<>|]/g;  // invalid symbols
+const newlineRegex   = /\r*\n|\r/g;
+const linebreakRegex = /<\/?div>|<br>/;   // global flag not needed
+
+// some browsers insert <font> tags during editing
+const stylingRegex = /<\/?span[^>]*>|<\/?font[^>]*>/g;
+
+// matches both single and multi-line comments
+const commentRegex = /\/\/.*?(?:<\/?div>|$)|\/\*.*?\*\//g;
+const numberRegex  = /(?<![A-Za-z_])-?\.?\b\d[A-Za-z\d.-]*/g;
+
+// matches both character and string literals
+// also allows for line continuation
+const stringRegex =
+    /(?:L|U|u|u8)?(['"]).*?(?<!\\<\/div>|.{6}\\)(?:\1|<div>)/g;
 
 const includeFileRegex  = /#\s*include\s+(&lt;.*?(?:&gt;|<\/?div>))/g;
 const macroRegex        = /#\s*define\s+([A-Za-z_]\w*)/g;
 const preprocessorRegex = new RegExp(
-    "#\\s*(?:" + preprocessorDirectives.join("|") + "))\\b", "g");
+    "#\\s*(?:" + preprocessorDirectives.join("|") + ")\\b", "g");
 
-const typeTagRegex = //g;
 const keywordRegex = new RegExp(
-    );
+    "\\b(?:" + dataTypes.join("|") + "|" +
+           otherKeywords.join("|") + ")\\b", "g");
 
+// both of these match entire statement from data type to semicolon
+const enumRegex     = /\benum\b[^;]*;/g;
+const dataTypeRegex = new RegExp(
+    "\\b(?:" + dataTypes.join("|") + ")\\b[^;]*;", "g");
 
+// update data type regex to include newly found typedefs
+function expandDataTypeRegex(typedefs, previous) {
 
-Single and Multi-Line Comments
-String and Character Literals
-Include Files in Angle Brackets
+    const begin = "\\b(?:";
+    const end   = ")\\b[^;]*;";
 
-Floating-Point Literals
-Integer Literals
-Preprocessor Directives
-Preprocessor Macros - TEST FIRST!
-Keywords
-Struct/Union/Enum Tag Names - TEST FIRST!
+    // combine previously found data types with new typedefs
+    const combined = previous.source
+        .replace(begin, "")
+        .replace(end,   "") + "|" + typedefs.join("|");
 
-Function Names, Function Parameters, Enum Constants
-Global Variables, Local Variables, Typedef Names
+    const regex     = new RegExp(begin + combined + end, "g");
+    regex.lastIndex = previous.lastIndex;  // carry over last index
 
-Handle Scoping
-
-class scope {
-
-    constructor(start, end, parameters) {
-        this.start      = start;
-        this.end        = end;
-        this.parameters = parameters;
-    }
+    return regex;
 }
 
-string.replace(/\{[^}]*\}/g, "{ }");
-string.replace(/\([^,)]*,[^)]*\)/g, "( )");
+// -------------------------------------
 
+// create regex from multiple patterns with whitespace in between
+function createPatternRegex(patterns) {
 
+    // might have whitespace, or patterns might run together
+    const whitespace = "(?:\\s|</?div>|<br>)*";
 
-while "done" flag not set
-  regex from last index using /([A-Za-z_]\w*)?\s*([{[=,;]/g
-  for case "{":
-    find matching closer
-    move last index to closer position
-  for case "[":
-    if "ignore" flag not set
-      add identifier to temp list
-      set "ignore" flag
-    find matching closer
-    move last index to closer position
-  for case "=":
-    if "ignore" flag not set
-      add identifier to temp list
-      set "ignore" flag
-  for case ",":
-    if "ignore" flag not set
-      add identifier to temp list
-    clear "ignore" flag
-  for case ";":
-    if "ignore" flag not set
-      add identifier to temp list
-    set "done flag"
-
-const regex = /([A-Za-z_]\w*)?\s*([{[=,;])/g;
-
-const tempList = [];
-let   ignore   = false;
-let   match    = regex.exec(string);
-
-while (match !== null) {
-
-    switch (match[2].charAt(0)) {
-
-        case '{': 
-            regex.lastIndex = matchDelim(string, regex.lastIndex, "{", "}");
-            break;
-
-        case '[':
-            regex.lastIndex = matchDelim(string, regex.lastIndex, "[", "]");
-            // fall through to next case...
-
-        case '=':
-            if (!ignore) {
-                tempList.push(match[1]);
-                ignore = true;
-            }
-            break;
-
-        case ',':
-            if (!ignore) {
-                tempList.push(match[1]);
-            } else {
-                ignore = false;
-            }
-            break;
-
-        case ';':
-            if (!ignore) {
-                tempList.push(match[1]);
-            }
-            match = null;
-            continue;
+    let sequence = "";
+    for (let i = 0; i < patterns.length - 1; i++) {
+        sequence += patterns[i] + whitespace;
     }
 
-    match = regex.exec(string);
+    // add final pattern to end and return as global regex
+    return new RegExp(sequence + patterns[patterns.length - 1], "g");
 }
 
-const fullLine = string.substring(startIndex, regex.lastIndex);
+// pattern for capturing identifier tokens
+const identifierToken = "\\b([A-Za-z_]\\w*)";
 
-if (fullLine.indexOf("typedef") !== -1) {
-    addTypes(tempList);
-} else {
-    addVariables(tempList);
-}
+// PATTERN: enum/struct/union followed by identifier
+const tagTypeRegex = createPatternRegex(
+    [ "\\b(?:enum|struct|union)", identifierToken ]);
 
+// PATTERN: struct/union followed by optional identifer and open brace
+const compositeRegex = createPatternRegex(
+    [ "\\b(?:struct|union)", identifierToken + "?", "\\{" ]);
 
+// PATTERN: optional identifier followed by one of: {[=&,;
+// semicolon terminates declaration
+// ampersand needed to avoid matching HTML entities
+const variableRegex = createPatternRegex(
+    [ identifierToken + "?", "([{[=&,;])" ]);
 
-function extractIdentifiers(string, index, regex, identifiers) {
+// PATTERN: optional identifier followed by one of: [,)
+// closed parenthesis terminates declaration
+const parameterRegex = createPatternRegex(
+    [ identifierToken + "?", "([[,)])" ]);
 
-    // flag to track whether an identifier should be added or ignored
-    let addMatch = true;
+// PATTERN: optional identifier followed by one of: =,}
+// closed brace terminates declaration
+const enumConstantRegex = createPatternRegex(
+    [ identifierToken + "?", "([=,}])" ]);
 
-    // set the starting index and walk through the string looking for pattern matches
-    regex.lastIndex = index;
-    for (let match = regex.exec(string);
-             match !== null;
-             match = regex.exec(string)) {
+// PATTERN: identifier followed by open parenthesis
+const functionRegex = createPatternRegex(
+    [ identifierToken, "\\(" ]);
 
-        switch (match[2]) {
+// PATTERN: identifier followed by text in parentheses and open brace
+const localScopeRegex = createPatternRegex(
+    [ identifierToken, "\\([^)]*\\)", "\\{" ]);
 
-            // skip over anything in braces (structure definitions, initializer lists, etc.)
-            case "{":
-                regex.lastIndex = findClosingDelimiter(string, regex.lastIndex, "{", "}");
-                break;
+// PATTERN: open parenthesis followed by asterisk, identifier,
+//              closed parenthesis, and second open parenthesis
+const callbackRegex = createPatternRegex(
+    [ "\\([^*)]*\\*", identifierToken, "\\)", "\\(" ]);
 
-            // skip over anything in brackets (array sizes, array element initializers, etc.)
-            // add the identifier before the brackets if nothing has been added yet
-            case "[":
-                regex.lastIndex = findClosingDelimiter(string, regex.lastIndex, "[", "]");
-                if (addMatch) {
-                    identifiers.push(match[1]);
-                    addMatch = false;
-                }
-                break;
-
-            // add the identifier before the equals sign if nothing has been added yet
-            case "=":
-                if (addMatch) {
-                    identifiers.push(match[1]);
-                    addMatch = false;
-                }
-                break;
-
-            // add the identifier before the comma if nothing has been added yet
-            // clear the flag for whether to add identifiers if it is set
-            case ",":
-                if (addMatch) {
-                    identifiers.push(match[1]);
-                } else {
-                    addMatch = true;
-                }
-                break;
-
-            // add the identifier before the semicolon or closing parenthesis if nothing has been added yet
-            // return the first index after the terminating character
-            case ";":
-            case ")":
-                if (addMatch) {
-                    identifiers.push(match[1]);
-                }
-                return regex.lastIndex;
-        }
-    }
-
-    // no terminating character was found - the phrase extends to the end of the string
-    return string.length;
-}
-
-*/
 // -----------------------------------------------------------------------------
-// all regular expressions confined to this section
+// global data
 
-// matches HTML-encoded line breaks
-const splitAcrossLines = /<\/?div>|<br>/;
+// current text to be styled
+// modified at various points to simplify regex matching
+let text = "";
 
-// -------------------------------------
+// specific region of current text
+class Scope {
 
-// convert list of identifiers into a regular expression
-function regexFromList(list) {
+    constructor(start = 0, stop = 0) {
+        this.start = start;
+        this.stop  = stop;  // first index outside of scope
+    }
 
-    // must work for preprocessor directives
-    return new RegExp("(?<![#\\w])(?:" + list.join("|") + ")\\b", "g");
+    set(start, stop) {
+        this.start = start;
+        this.stop  = stop;
+    }
+
+    // target entirety of current text
+    clear() {
+        this.start = 0;
+        this.stop  = text.length;
+    }
 }
 
-// build a regular expression which matches variable names
-// passing "typedef" as trigger builds regex for typedefs
-// can pass multiple delimiter characters like "[;=]"
-function regexForVariables(trigger, delimiter = ";") {
+// region of current text to apply given style
+class Style extends Scope {
 
-    let triggerOn = trigger;  // assume trigger is string
-    if (Array.isArray(trigger)) {
+    constructor(style, start, stop) {
+        super(start, stop);
+        this.style = style;  // used to create <span> tag
+    }
+}
 
-        // construct list of known data types
-        triggerOn = dataType.join("|");
-        if (trigger.length > 0) {
-            triggerOn += "|" + trigger.join("|");  // add triggers
+const styles = [];           // array of Style objects
+const scope  = new Scope();  // indices of current local scope
+const search = new Scope();  // indices for next filter function call
+
+// prepare for next styling pass
+function initializeGlobals(unstyled) {
+
+    text          = unstyled;
+    styles.length = 0;   // discard previous Style objects
+    scope.clear();
+    search.clear();
+}
+
+// build finished text based on current styling
+// needs fresh copy of text without modifications
+function applyStyles(unstyled) {
+
+    if (styles.length === 0) {
+        return unstyled;  // no styles to apply
+    }
+
+    // create shorter name for String.substring() calls
+    const mid = unstyled.substring.bind(unstyled);
+    styles.sort(function(a, b) {
+        return a.start - b.start; });  // sort by starting index
+
+    let html = mid(0, styles[0].start);  // text before first Style
+    for (let i = 0; i < styles.length; i++) {
+
+        // wrap target text with <span> tag
+        html += "<span class='" + styles[i].style + "'>" +
+                mid(styles[i].start, styles[i].stop)     +
+                "</span>";
+
+        // copy text between current Style and next Style
+        if (i + 1 < styles.length) {
+            html += mid(styles[i].stop, styles[i + 1].start);
+        } else {
+            html += mid(styles[i].stop);  // text after last Style
         }
-
-        // wrap list as non-capturing group
-        triggerOn = "(?:" + triggerOn + ")";
-    }
-
-    // match valid variable name, ignoring whitespace and modifiers
-    return new RegExp(
-        triggerOn                 +  // starts with triggering match
-        "[^()]*?([A-Za-z_]\\w*)"  +  // capture last token of match
-        "(?:\\s|<\\/?div>|<br>)*" +  // possible whitespace after token
-        delimiter, "g");             // match ends with delimiter
-}
-
-// -------------------------------------
-
-// strip previously applied styles
-function unstyledFromStyled(html) {
-
-    return html
-        .replace(/<span[^>]*>/g, "")
-        .replace(/<font[^>]*>/g, "")  // added by some browsers
-        .replace(/<\/span>/g,    "")
-        .replace(/<\/font>/g,    "");
-}
-
-// convert HTML into plain text
-function textFromHTML(html) {
-
-    let text = unstyledFromStyled(html)
-        .replace(/<div>/g,        "\n")
-        .replace(/<\/div>|<br>/g, "")
-        .replace(/&lt;/g,         "<")
-        .replace(/&gt;/g,         ">");
-
-    // first text element may or may not be inside a <div>
-    if (text[0] == "\n") {
-        text = text.substring(1);  // chop off extra newline
-    }
-
-    return text;
-}
-
-// convert plain text into unstyled HTML
-function htmlFromText(text) {
-
-    const cleanText = text
-        .replace(/</g, "&lt;")
-        .replace(/>/g, "&gt;");
-
-    // if it might be a line break, it's a line break
-    const lines = cleanText.split(/\r*\n|\r/);
-    if (lines.length < 2) {
-        return lines[0];
-    }
-
-    let html = "";
-    for (let i = 0; i < lines.length; i++) {
-
-        if (lines[i].length < 1) {
-            lines[i] = "<br>";  // required for empty lines
-        }
-        html += "<div>" + lines[i] + "</div>";
     }
 
     return html;
 }
 
-// -------------------------------------
+// -----------------------------------------------------------------------------
+// style entire regex match
 
-function styleCommentsAndLiterals(styler) {
+// is region outside of any existing Style object?
+function canStyle(start, stop) {
 
-    // color-code C-style comments
-    styler.updateMatchedText(
-        /\/\*.*?\*\//g,    // regex to match against
-        "comment",         // which CSS style to apply
-        splitAcrossLines,  // ensure HTML tags are nested correctly
-        "", "");           // hide text from further examination
+    for (let i = 0; i < styles.length; i++) {
 
-    // color-code character literals and strings
-    styler.updateMatchedText(
-        /(['"]).*?(?<!\\<\/div>|.{6}\\)(?:\1|<div>)/g,
-        "literal",
-        splitAcrossLines,
-        "$", "$");  // mark hidden text with dollar signs at either end
-
-    // color-code numbers
-    styler.updateMatchedText(/-?\.?\d[A-Za-z\d\-\.]*/g, "literal");
-}
-
-// -------------------------------------
-
-function stylePreprocessorDirectives(styler) {
-
-    // color-code most preprocessor directives
-    styler.updateMatchedText(
-        regexFromList(preprocessor),  // build regex from list
-        "preprocessor");
-
-    // color-code "#define" directives
-    const groups = [null, [] ];  // only return 2nd capture group
-    styler.findCaptureGroups(
-        /(#define)\s+([A-Za-z_]\w*)/g,
-        ["preprocessor"],  // style for 1st capture group
-        groups);
-
-    // color-code any macros retrieved in previous step
-    if (groups[1].length > 0) {
-
-        styler.updateMatchedText(
-            regexFromList(groups[1]),  // build regex from list
-            "macro",
-            null,       // macros are all single tokens
-            "$", "$");  // mark hidden text with dollar signs
+        if (start < styles[i].stop && stop > styles[i].start) {
+            return false;  // cannot style - regions would overlap
+        }
     }
+
+    return true;  // could style - no overlap
 }
 
-// -------------------------------------
+// action functions are passed as arguments to filter functions
+// filter functions execute regex and call action for each match found
 
-function styleKeywords(styler) {
+// ACTION: add to styles array, but prevent overlapping regions
+function addMatch(style, start, stop) {
 
-    // color-code most keywords
-    styler.updateMatchedText(
-        regexFromList(keyword),
-        "keyword",
-        null,       // keywords are all single tokens
-        "$", "$");  // mark hidden text with dollar signs at either end
+    if (canStyle(start, stop) === false) {
+        return false;  // cannot add - text already styled
+    }
 
-    // color-code data type keywords
-    styler.updateMatchedText(regexFromList(dataType), "keyword");
-
-    // matches struct/enum/union names (also captures matched keyword)
-    const captureComposites = new RegExp(
-        "(" + composite.join("|") + ")" +  // keywords to match
-        "(?:\\s|<\\/?div>|<br>)+" +        // whitespace
-        "([A-Za-z_]\\w*)", "g");           // token to capture
-
-    // color-code composite data types
-    const styles = ["keyword", "userDefined"];
-    styler.findCaptureGroups(captureComposites, styles);
+    styles.push(new Style(style, start, stop));
+    return true;  // style added successfully
 }
 
-// -------------------------------------
+// ACTION: add to styles array, but also account for line breaks
+function splitMatch(style, start, stop) {
 
-// find closing match for given pair of symbols
-function findClosingDelimiter(text, opensAt, opener, closer) {
+    if (canStyle(start, stop) === false) {
+        return false;  // cannot add - text already styled
+    }
 
-    let closesAt = opensAt;
-    do {
+    // break regex match into lines
+    const lines = text
+        .substring(start, stop)
+        .split(linebreakRegex)
+        .filter(function(s) {
+            return s.length > 0; });  // remove empty strings
 
-        closesAt = text.indexOf(closer, closesAt + closer.length);
-        if (closesAt < 0) {
-            closesAt = text.length;
+    stop = start;  // needed for first iteration
+    for (let i = 0; i < lines.length; i++) {
+
+        // find current line in original text
+        start = text.indexOf(lines[i], stop);
+        stop  = start + lines[i].length;
+
+        styles.push(new Style(style, start, stop));  // add line
+    }
+
+    return true;  // style(s) added successfully
+}
+
+// ACTION: add to styles array, but also hide from future searches
+function hideMatch(style, start, stop) {
+
+    if (splitMatch(style, start, stop) === false) {
+        return;  // cannot add - text already styled
+    }
+
+    // replace regex match with spaces
+    text = text.substring(0, start) +  // text before match
+           " ".repeat(stop - start) +  // same number of characters
+           text.substring(stop);       // text after match
+}
+
+// FILTER: apply style using given action for each regex match
+function styleMatches(style, action, regex) {
+
+    regex.lastIndex = search.start;  // respect search scope
+
+    for (let match = regex.exec(text);
+             match !== null;
+             match = regex.exec(text)) {
+
+        const stop  = match.index + match[0].length;
+        if (stop > search.stop) {
+            break;  // respect search scope
         }
 
-        // overwrite passed-in value
-        opensAt = text.indexOf(opener, opensAt + opener.length);
-        if (opensAt < 0) {
-            opensAt = text.length;
-        }
-
-    // doesn't use <= because potential for infinite loop
-    } while (opensAt < closesAt);
-
-    return closesAt;
-}
-
-function styleLocalVariables(styler, parameters) {
-
-    // confirm has function body
-    const text = styler.edited.substring(parameters.stop);
-    if (text.search(/(?:\s|<\/?div>|<br>)*\{/) !== 0) {
-        return;
-    }
-
-    // scope down to just parameter list
-    styler.setScope(parameters.start, parameters.stop);
-
-    // find parameter names
-    const groups = [ [] ];  // return 1st (and only) capture group
-    styler.findCaptureGroups(
-        /\b(\w+)(?:\s|<\/?div>|<br>)*(?:,|\))/g,
-        ["variable"],  // style for names in parameter list
-        groups);
-
-    // confirm has at least one parameter
-    if (groups[0].length < 1) {
-        return;
-    }
-
-    // change scope to function body
-    const opensAt = text.indexOf("{");
-    styler.setScope(
-        parameters.stop + opensAt,
-        parameters.stop + findClosingDelimiter(text, opensAt, "{", "}"));
-
-    // color-code parameter names
-    styler.updateMatchedText(
-        regexFromList(groups[0]),
-        "variable");
-
-    styler.clearScope();
-}
-
-function styleFunctions(styler) {
-
-    // find functions and their parameter lists
-    const groups = [ [] ];               // only return 1st capture group
-    const styles = [ "", "parameters"];  // temp style for 2nd group
-    styler.findCaptureGroups(
-        /([A-Za-z_]\w*)(?:\s|<\/?div>|<br>)*\((.*?\))/g,
-        styles,
-        groups);
-
-    // confirm has at least one function
-    if (groups[0].length < 1) {
-        return;
-    }
-
-    // color-code function names
-    styler.updateMatchedText(
-        regexFromList(groups[0]),
-        "function");
-
-    // extract parameter list Styling objects from styler
-    const parameters = styler.styling
-        .filter(function(s) { return s.style === styles[1]; });
-    styler.removeStyling(styles[1]);
-
-    // find and color-code variable names within each function
-    for (let i = 0; i < parameters.length; i++) {
-        styleLocalVariables(styler, parameters[i]);
+        action(style, match.index, stop);
     }
 }
 
-// -------------------------------------
+// use temporary regex to apply style to each match
+// "tokens" can be either single token or pre-joined string of tokens
+function quickStyle(style, tokens) {
 
-// saves and restores text caret after updating inner HTML
-// should probably be rewritten to count <div> tags or something
-function preserveCaret(element, html) {
+    // confirm valid token list provided
+    if (tokens !== "") {
 
-    const selection = window.getSelection();
-    if (!selection || selection.rangeCount < 1) {
-        element.innerHTML = html;
-        return;
+        const regex = new RegExp("\\b(?:" + tokens + ")\\b", "g");
+        styleMatches(style, addMatch, regex);
     }
-
-    const range = selection.getRangeAt(0).cloneRange();
-    range.setStart(element, 0);
-    let caret = range.toString().length;
-
-    element.innerHTML = html;
-
-    const tree = document.createTreeWalker(element, NodeFilter.SHOW_TEXT);
-    while (tree.nextNode() && caret > tree.currentNode.length) {
-        caret -= tree.currentNode.length;
-    }
-    caret = Math.min(caret, tree.currentNode.length);
-
-    range.setStart(tree.currentNode, caret);
-    range.collapse(true);
-    selection.removeAllRanges();
-    selection.addRange(range);
-}
-
-// apply styling step-by-step and display for user
-function styleEditBox() {
-
-    const editBox = document.getElementById("editBox");
-    const html    = unstyledFromStyled(editBox.innerHTML);
-    const styler  = new StyleBuilder(html);
-
-    styleCommentsAndLiterals(styler);
-    stylePreprocessorDirectives(styler);
-    styleKeywords(styler);
-    styleFunctions(styler);
-
-    // apply styling and update edit box
-    preserveCaret(editBox, styler.buildStyledHTML());
 }
 
 // -----------------------------------------------------------------------------
+// style first capture group
 
-let hasChanges = false;  // edit box dirty flag
-let stylingTimer;        // timer ID for debouncing
+// ACTION: try to style first capture group and report success/failure
+function addGroup(style, match) {
+
+    // extract token from match and remove any stray linebreaks
+    const token = match[1].replace(linebreakRegex, "");
+
+    // find token within full text
+    const start = match.index + match[0].indexOf(token);
+    const stop  = start + token.length;
+
+    return addMatch(style, start, stop);  // try to style
+}
+
+// search for #undef declaration matching given token
+function findUndef(token, start, style) {
+
+    // build regex around provided token
+    const regex = new RegExp("#\\s*undef\\s+(" + token + ")\\b", "g");
+
+    regex.lastIndex = start;  // start at end of original #define
+
+    for (let match = regex.exec(text);
+             match !== null;
+             match = regex.exec(text)) {
+
+        // confirm matching #undef is outside comment/string/etc.
+        if (addGroup(style, match) === true) {
+
+            // matching #undef found!
+            return match.index;
+        }
+    }
+
+    return text.length;  // no matching #undef - use end of file
+}
+
+// ACTION: check potential macro and style within its valid scope
+function addMacro(style, match) {
+
+    // check if macro defined outside comment/string/etc.
+    if (addGroup(style, match) === false) {
+        return;  // macro not valid - text already styled
+    }
+
+    // limit next search to macro's valid scope
+    // match[1] is capture group with macro token
+    const start = match.index + match[0].length;
+    search.set(
+        start,
+        findUndef(match[1], start, style));
+
+    // search for macro and apply style
+    quickStyle(style, match[1]);
+    search.clear();  // remove search limit set above
+}
+
+// ACTION: check potential function name and style if valid
+function addFunction(style, match) {
+
+    // check if function name outside comment/string/etc.
+    if (addGroup(style, match) === false) {
+        return;  // function name not valid - text already styled
+    }
+
+    // match[1] is capture group with function name
+    quickStyle(style, match[1]);
+}
+
+// FILTER: apply style using given action for each regex match
+function styleGroups(style, action, regex) {
+
+    for (let match = regex.exec(text);
+             match !== null;
+             match = regex.exec(text)) {
+
+        action(style, match);
+    }
+}
+
+// -----------------------------------------------------------------------------
+// style identifier tokens
+
+// find matching bracket/brace for symbol just before starting index
+function findCloser(start, opener, closer) {
+
+    start--;           // back up to original opener
+    let stop = start;  // needed for first iteration
+    do {
+
+        // find next closing symbol
+        stop = text.indexOf(closer, stop + closer.length);
+        if (stop === -1) {
+            stop = text.length - 1;  // nothing left to match
+        }
+
+        // find next opening symbol
+        start = text.indexOf(opener, start + opener.length);
+        if (start === -1) {
+            start = text.length - 1;  // nothing left to match
+        }
+
+    // start is less than stop only when current opener is nested
+    // if nested, current closer cannot match with original opener
+    } while (start < stop);
+
+    // return index after matching closer, or text.length if no match
+    return stop + 1;
+}
+
+// add token to array if outside any existing Style object's region
+function addToken(match, tokens) {
+
+    // match[1] is identifier token
+    if (match[1] !== undefined &&  // token may have been optional
+        canStyle(
+            match.index,
+            match.index + match[1].length) === true) {
+
+        tokens.push(match[1]);  // add to provided array
+    }
+}
+
+// extract valid identifier tokens within current search region
+function findTokens(regex) {
+
+    // collect tokens in local array
+    const tokens = [];
+    let   canAdd = true;  // add next token?
+
+    regex.lastIndex = search.start;  // respect search scope
+
+    for (let match = regex.exec(text);
+             match !== null;
+             match = regex.exec(text)) {
+
+        const stop = match.index + match[0].length;
+        if (stop > search.stop) {
+            break;  // respect search scope
+        }
+
+        switch (match[2]) {  // match[2] is symbol after token
+
+            // regex parameter limits which of these cases get used
+
+            // skip any text inside braces
+            case "{":
+                regex.lastIndex = findCloser(regex.lastIndex, "{", "}");
+                break;
+
+            // add token in front of brackets
+            // but skip any text inside brackets
+            case "[":
+                if (canAdd === true) {        // first match only
+                    addToken(match, tokens);  // add identifier token
+                    canAdd = false;
+                }
+                regex.lastIndex = findCloser(regex.lastIndex, "[", "]");
+                break;
+
+            // add token in front of equals sign
+            case "=":
+                if (canAdd === true) {        // first match only
+                    addToken(match, tokens);  // add identifier token
+                    canAdd = false;
+                }
+                break;
+
+            // nothing after ampersand is valid token
+            case "&":
+                canAdd = false;  // disable matching
+                break;
+
+            // add token in front of comma
+            case ",":
+                if (canAdd === true) {        // first match only
+                    addToken(match, tokens);  // add identifier token
+                }
+                canAdd = true;  // reset matching flag
+                break;
+
+            // add token in front of declaration terminator
+            case ";":  // for variables and typedefs
+            case ")":  // for parameters
+            case "}":  // for enumerations
+                if (canAdd === true) {        // first match only
+                    addToken(match, tokens);  // add identifier token
+                }
+                return tokens;  // declaration finished
+        }
+    }
+
+    return tokens;  // no declaration terminator found
+}
+
+// ACTION: extract typedefs from match - first parameter ignored
+function findTypedefs(unused, match, regex) {
+
+    // determine if match is actually typedef declaration
+    if (match[0].indexOf("typedef") !== -1) {
+
+        // extract list of typedefs
+        search.set(match.index, match.index + match[0].length);
+        const tokens = findTokens(regex);
+        search.clear();
+
+        return tokens;  // return new typedefs
+    }
+
+    return "";  // no typedefs to return
+}
+
+// ACTION: find identifier tokens and style within current scope
+function styleTokens(style, match, regex) {
+
+    // extract list of tokens
+    search.set(match.index, match.index + match[0].length);
+    const tokens = findTokens(regex);
+
+    // apply style through end of current scope
+    search.stop = scope.stop;
+    quickStyle(style, tokens.join("|"));
+    search.clear();
+
+    return tokens;  // needed for typedef handling
+}
+
+// ACTION: find variables and typedefs and style within current scope
+// "style" parameter is array of strings
+function styleVariables(style, match, regex) {
+
+    // determine if match is typedef or variable declaration
+    if (match[0].indexOf("typedef") !== -1) {
+
+        // style typedefs and return identifier tokens
+        return styleTokens(style[1], match, regex);
+
+    } else {
+
+        // style variables and return empty string
+        styleTokens(style[0], match, regex);
+        return "";  // no typedefs to return
+    }
+}
+
+// FILTER: apply style using given action to each matching phrase
+function styleIdentifiers(style, action, phrase, regex, expand = false) {
+
+    phrase.lastIndex = scope.start;  // respect current scope
+
+    // locate match for phrase regex within current text
+    for (let match = phrase.exec(text);
+             match !== null;
+             match = phrase.exec(text)) {
+
+        const stop = match.index + match[0].length;
+        if (stop > scope.stop) {
+            break;  // respect current scope
+        }
+
+        // apply action to matching phrase using second regex
+        const tokens = action(style, match, regex);
+
+        // optionally expand phrase regex with any new typedefs found
+        if (expand === true && tokens !== "") {
+            phrase = expandDataTypeRegex(tokens, phrase);
+        }
+    }
+
+    return phrase;  // return expanded phrase regex
+}
+
+// -----------------------------------------------------------------------------
+// maintain caret position
+
+// get length of node in characters, accounting for linebreaks
+function nodeLength(node) {
+
+    let length = node.textContent.length;
+
+    // linebreaks add 1 extra character
+    if (node.nodeName             === "DIV" || (
+        node.nextSibling          !== null  &&
+        node.nextSibling.nodeName === "DIV" )) {
+
+        length++;
+    }
+
+    return length;
+}
+
+// convert selection range into character offset
+function offsetFromRange(editbox, range) {
+
+    let node   = range.endContainer;
+    let offset = range.endOffset;
+
+    if (node === editbox || editbox.contains(node) === false) {
+        return 0;  // selection was outside editbox
+    }
+
+    // step backward through node hierarchy to find total offset
+    else while (node !== editbox) {
+
+        // step backward through siblings
+        while (node.previousSibling !== null) {
+            node    = node.previousSibling;
+            offset += nodeLength(node);
+        }
+
+        // go up 1 level when no more siblings
+        node = node.parentNode;
+    }
+
+    // return total offset from beginning of editbox
+    return offset;
+}
 
 // -------------------------------------
 
-// EVENT LISTENER - attached by initialize()
-// after no input for 2 seconds, update styles used in edit box
-function debounceStyling() {
+// return selection range for target location
+function buildRange(node, offset) {
 
-    hasChanges = true;
+    // check if offset out of bounds
+    if (offset > node.textContent.length) {
+        offset = node.textContent.length;
+    }
 
-    // restart timer
-    clearTimeout(stylingTimer);  // silently errors on invalid timer ID
-    stylingTimer = setTimeout(styleEditBox, 2000);
+    const range = document.createRange();
+    range.setEnd(node, offset);
+    range.collapse();  // collapse to end point set above
+
+    return range;
 }
 
-function confirmDropChanges() {
+// convert character offset into selection range
+function rangeFromOffset(editbox, offset) {
+
+    let node = editbox.firstChild;
+    if (node === null) {
+        return buildRange(editbox, 0);  // editbox was empty
+    }
+
+    // step forward through node hierarchy by total offset amount
+    while (true) {
+
+        const length = nodeLength(node);
+        if (offset >= length) {  // is offset past current node?
+
+            // should never happen, but just in case
+            if (node.nextSibling === null) {
+                break;
+            }
+
+            node    = node.nextSibling;
+            offset -= length;  // track offset remaining
+
+        } else {  // offset is within current node
+
+            if (node.firstChild === null) {
+                break;  // already at bottom of hierarchy
+            }
+
+            // go down 1 level for more fine-grain control
+            node = node.firstChild;
+        }
+    }
+
+    // ensure we are at bottom of node hierarchy
+    while (node.firstChild !== null) {
+        node = node.firstChild;
+    }
+
+    // create Range object representing current position
+    return buildRange(node, offset);
+}
+
+// -------------------------------------
+
+// remember caret location and restore after updating text
+function maintainCaret(editbox, html) {
+
+    // check if caret is active
+    const selection = window.getSelection();
+    if (selection            === null   ||
+        selection.type       === "None" ||
+        selection.rangeCount === 0) {
+
+        editbox.innerHTML = html;  // caret not active
+        return;
+    }
+
+    // save caret position, then update editbox text
+    const offset = offsetFromRange(editbox, selection.getRangeAt(0));
+    editbox.innerHTML = html;
+
+    // restore caret position from offset
+    selection.removeAllRanges();
+    selection.addRange(rangeFromOffset(editbox, offset));
+}
+
+// -----------------------------------------------------------------------------
+// style editbox
+
+// needed if user copy/pastes into typing area
+function normalizeCurrentText(editbox) {
+
+    const begin = /^(?!<div>)/;    // doesn't begin with <div>
+    const end   = /(?!<\/div>)$/;  // doesn't end with </div>
+
+    let unstyled = editbox.innerHTML
+        .replace(stylingRegex, "")              // remove styling
+        .replace(newlineRegex, "</div><div>");  // convert newlines
+
+    // add opening/closing <div> tags if needed
+    if (begin.test(unstyled)) {
+        unstyled = "<div>" + unstyled;
+    }
+    if (end.test(unstyled)) {
+        unstyled += "</div>";
+    }
+
+    // insert <br> tags and return normalized text
+    return unstyled.replace(/<div><\/div>/g, "<div><br></div>");
+}
+
+// simplify struct/union definitions and function pointers
+function sanitizeCurrentText() {
+
+    // find structure and union definitions
+    for (let match = compositeRegex.exec(text);
+             match !== null;
+             match = compositeRegex.exec(text)) {
+
+        // extract definition and remove semicolons
+        const start      = compositeRegex.lastIndex;
+        const stop       = findCloser(start, "{", "}") - 1;
+        const definition = text
+            .substring(start, stop)
+            .replace(/;/g, " ");
+
+        // replace definition in text with cleaned copy
+        text = text.substring(0, start) +  // text before match
+               definition               +  // cleaned copy
+               text.substring(stop);       // text after match
+    }
+
+    // find function pointers
+    for (let match = callbackRegex.exec(text);
+             match !== null;
+             match = callbackRegex.exec(text)) {
+
+        // get length of prefix and indices for identifier token
+        const prefix = match[0].indexOf(match[1]);
+        const start  = match.index + prefix;     // beginning of token
+        const stop   = start + match[1].length;  // end of token
+
+        // check if match is valid function pointer
+        if (canStyle(start, stop) === false) {
+
+            // if not valid, resume search at end of token
+            callbackRegex.lastIndex = stop;
+            continue;
+        }
+
+        // find parenthesis at end of function pointer declaration
+        const closer = findCloser(callbackRegex.lastIndex, "(", ")");
+
+        // replace function pointer prefix and suffix with spaces
+        // keep identifier token, and all text before/after pointer
+        text = text.substring(0, match.index) +  // text before match
+               " ".repeat(prefix)             +  // replace prefix
+               match[1]                       +  // keep token
+               " ".repeat(closer - stop)      +  // replace suffix
+               text.substring(closer);           // text after match
+    }
+}
+
+// -------------------------------------
+
+// style function names and identifiers with local scope
+function styleLocalScopes() {
+
+    const functions    = [];             // collect function names
+    let   stop         = 0;              // track end of previous scope
+    let   currentTypes = dataTypeRegex;  // track added global typedefs
+
+    // find beginning of next local scope
+    for (let match = localScopeRegex.exec(text);
+             match !== null;
+             match = localScopeRegex.exec(text)) {
+
+        // check if match is valid function
+        if (addGroup("function", match) === false) {
+
+            // if not valid, resume search at end of invalid token
+            localScopeRegex.lastIndex = match.index + match[1].length;
+            continue;
+        }
+        functions.push(match[1]);  // add function name to list
+
+        // find global typedefs between previous and current scopes
+        scope.set(stop, match.index);
+        currentTypes = styleIdentifiers(
+            "",             // parameter ignored by findTypedefs()
+            findTypedefs,
+            currentTypes,
+            variableRegex,  // typedefs look like variable declarations
+            true);          // expand data type regex and return result
+
+        // move scope to function's body
+        stop = findCloser(localScopeRegex.lastIndex, "{", "}");
+        scope.set(localScopeRegex.lastIndex, stop - 1);
+
+        // style parameters and local enumerations
+        styleTokens("parameter", match, parameterRegex);
+        styleIdentifiers("enumConstant",
+            styleTokens, enumRegex, enumConstantRegex);
+
+        // style local variables and local typedefs
+        // current types expanded temporarily until end of current scope
+        styleIdentifiers([ "localVariable", "typedef" ],
+            styleVariables, currentTypes, variableRegex, true);
+
+        // resume search at end of local scope
+        localScopeRegex.lastIndex = stop;
+    }
+
+    // style function names - both known and probable
+    quickStyle( "function", functions.join("|"));
+    styleGroups("function", addFunction, functionRegex);
+
+    scope.clear();
+}
+
+// update styling for text currently entered in typing area
+function styleEditbox() {
+
+    // remove old styling and prepare for next styling pass
+    const editbox  = document.getElementById("editbox");
+    const unstyled = normalizeCurrentText(editbox);
+    initializeGlobals(unstyled);
+
+    // style comments and hide from future searches
+    styleMatches("comment", hideMatch, commentRegex);
+
+    // style string and numeric literals
+    styleMatches("literal", splitMatch, stringRegex);
+    styleGroups( "literal", addGroup,   includeFileRegex);
+    styleMatches("literal", addMatch,   numberRegex);
+
+    // style preprocessor directives, including macros
+    styleMatches("preprocessor", addMatch, preprocessorRegex);
+    styleGroups( "macro",        addMacro, macroRegex);
+
+    // style keywords and tag types
+    styleMatches("keyword", addMatch, keywordRegex);
+    styleGroups( "tagType", addGroup, tagTypeRegex);
+
+    // style local identifiers and function names
+    sanitizeCurrentText();  // simplify certain things first
+    styleLocalScopes();
+
+    // style global enumerations
+    styleIdentifiers("enumConstant",
+        styleTokens, enumRegex, enumConstantRegex);
+
+    // style global variables and global typedefs
+    styleIdentifiers([ "globalVariable", "typedef" ],
+        styleVariables, dataTypeRegex, variableRegex, true);
+
+    // replace previous text with newly styled text
+    maintainCaret(editbox, applyStyles(unstyled));
+}
+
+// -----------------------------------------------------------------------------
+// event handlers
+
+let hasChanges = false;  // dirty flag for typing area
+let updateTimer;         // debouncing timer
+
+// EVENT LISTENER: triggered by user typing
+function updateEditbox() {
+
+    hasChanges = true;  // set dirty flag
+
+    // after no typing for 2 seconds, update styling
+    clearTimeout(updateTimer);
+    updateTimer = setTimeout(styleEditbox, 2000);
+}
+
+// ask user if they want to save changes
+function dropChanges() {
 
     return !hasChanges ||
            confirm("You will lose any unsaved changes.");
 }
 
-// reset edit box to starting conditions
-function clearEditBox() {
+// BUTTON ACTION: delete contents of typing area
+function clearEditbox() {
 
-    if (!confirmDropChanges()) {
+    if (dropChanges() === false) {
         return;
     }
 
-    document.getElementById("editBox").innerHTML = "";
-    document.getElementById("fileName").value    = "temp.txt";
+    // reset page controls to default values
+    document.getElementById("editbox").innerHTML = "";
+    document.getElementById("filename").value    = "NewFile.txt";
     hasChanges                                   = false;
 }
 
 // -------------------------------------
 
-// trigger hidden file picker control
-function pickFile() {
+// BUTTON ACTION: open file picker dialog box
+function selectFile() {
 
-    if (!confirmDropChanges()) {
+    if (dropChanges() === false) {
         return;
     }
 
+    // simulate user clicking on hidden file picker control
     document.getElementById("filePicker").click();
 }
 
-// EVENT LISTENER - attached by readFile()
-// convert file to HTML, load, and style
-function loadFile(text) {
+// EVENT LISTENER: triggered by closing file picker dialog box
+// "this" is file picker control to which listener is attached
+function uploadFile() {
 
-    document.getElementById("editBox").innerHTML = htmlFromText(text);
-
-    styleEditBox();
-    hasChanges = false;
-}
-
-// EVENT LISTENER - attached by initialize()
-// read selected file and load into edit box
-function readFile() {
-
-    if (this.files.length < 1) {
-        return;  // file picker cancelled!
+    // check if user cancelled file picker
+    if (this.files.length === 0) {
+        return;
     }
 
-    let fileName = this.files[0].name;
-    if (fileName.indexOf(".") < 0) {
-        fileName += ".";
+    // update filename control
+    let filename = this.files[0].name;
+    if (filename.indexOf(".") === -1) {
+        filename += ".";  // denotes no file extension
     }
-    document.getElementById("fileName").value = fileName;
+    document.getElementById("filename").value = filename;
 
-    const reader = new FileReader();
-    reader.addEventListener("load", function () {
-        loadFile(reader.result);
+    // create and initialize file reader object
+    const fileReader = new FileReader();
+    fileReader.addEventListener("load", function() {
+
+        // sanitize file data and convert newline characters
+        let fileData = fileReader.result
+            .replace(/</g,         "&lt;")
+            .replace(/>/g,         "&gt;")
+            .replace(newlineRegex, "</div><div>");
+
+        // add opening/closing <div> tags and insert <br> tags
+        fileData = "<div>" + fileData + "</div>";
+        fileData = fileData.replace(/<div><\/div>/g, "<div><br></div>");
+
+        // load file data into typing area and clear dirty flag
+        document.getElementById("editbox").innerHTML = fileData;
+        hasChanges                                   = false;
+
+        styleEditbox();  // style newly loaded text
     });
 
-    reader.readAsText(this.files[0]);
-    this.value = "";  // clear file picker
+    // read selected file, which triggers "load" listener above
+    fileReader.readAsText(this.files[0]);
+    this.value = "";  // reset file picker control for reuse
 }
 
 // -------------------------------------
 
-// package up file and simulate clicking download link
-function dispatchFile(name, type, content) {
+// BUTTON ACTION: save contents of typing area to "Downloads" folder
+function downloadFile() {
 
-    const file = new Blob([content], { type: type });
-    const url  = URL.createObjectURL(file);
+    let fileType      = "text/plain";
+    let filenameParts = document.getElementById("filename").value
+        .replace(filenameRegex, "_")  // remove invalid symbols
+        .trim()
+        .split(".");  // split actual filename from extension
 
+    // determine filename
+    let filename = filenameParts[0];
+    if (filename === "") {
+        filename = "NewFile";  // use default filename
+    }
+
+    // determine extension
+    if (filenameParts.length === 1) {
+        filename += ".txt";    // use default extension
+    }
+    else if (filenameParts[1] !== "") {
+        filename += "." + filenameParts[1];  // keep extension
+    }
+    else {
+        // original filename ended with period, so no extension
+        // switch to file type with no default extension
+        fileType = "application/octet-stream";
+    }
+
+    // convert HTML to plain text - many HTML tags are just discarded
+    const fileData = document.getElementById("editbox").innerHTML
+        .replace(stylingRegex,    "")
+        .replace(/<\/div><div>/g, "\n")  // convert normal newlines
+        .replace(/^<div>/,        "")    // remove opening <div>
+        .replace(/<\/div>$/,      "")    // remove closing </div>
+        .replace(/<br>/g,         "")
+        .replace(/<\/?div>/g,     "\n")  // convert abnormal newlines
+        .replace(/&lt;/g,         "<")
+        .replace(/&gt;/g,         ">");
+
+    // create temporary download link
+    const file    = new Blob([ fileData ], { type: fileType });
+    const url     = URL.createObjectURL(file);
     const link    = document.createElement("a");
     link.href     = url;
-    link.download = name;  // set file name
+    link.download = filename;
 
+    // simulate user clicking temporary download link, then clean up
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
+    URL.revokeObjectURL(url);  // free up resources
 
-    URL.revokeObjectURL(url);  // clean up temp URL
-}
-
-// determine file name and official "type" of download
-function downloadFile() {
-
-    let type = "text/plain";
-    let name = document.getElementById("fileName").value;
-    if (name.indexOf(".") < 0) {
-        name += ".txt";  // append default extension
-    }
-
-    else if (name.at(-1) == ".") {
-        name = name.substring(0, name.length - 1);  // chop off period
-        type = "application/octet-stream";  // prevent default extension
-    }
-
-    const editBox = document.getElementById("editBox");
-    const content = textFromHTML(editBox.innerHTML);
-
-    dispatchFile(name, type, content);  // package file and dispatch
-    hasChanges = false;
+    hasChanges = false;  // clear dirty flag
 }
 
 // -------------------------------------
 
-// attach event listeners and prep edit box for user
-function initialize() {
+// EVENT LISTENER: triggered by user trying to leave page
+function exitPage(event) {
 
-    document
-        .getElementById("filePicker")
-        .addEventListener("change", readFile);
+    if (hasChanges === true) {
 
-    document
-        .getElementById("editBox")
-        .addEventListener("input", debounceStyling);
+        if (typeof event.preventDefault === "function") {
+            event.preventDefault();         // for newer browsers
+        } else {
+            event.returnValue = "confirm";  // for older browsers
+        }
+    }
+}
 
-    clearEditBox();
+// attach event listeners and prepare page for user
+function initializePage() {
+
+    window.addEventListener("beforeunload", exitPage);
+
+    document.getElementById("filePicker")
+        .addEventListener("change", uploadFile);
+
+    document.getElementById("editbox")
+        .addEventListener("input", updateEditbox);
+
+    clearEditbox();  // same as clicking "New File" button
 }
 
 // -----------------------------------------------------------------------------
     </script>
 
 </head>
-<body onload="initialize()">
+<body onload="initializePage()">
+<div id="container">
 
-    <div class="viewPort">
-        <div class="toolBar">
+    <div id="toolbar">
 
-            <input type="button"
-                   value="New File"
-                   onclick="clearEditBox()">
+        <!-- hidden behind other controls -->
+        <input type="file"
+               id="filePicker"
+               accept="text/plain">
 
-            <!-- invisible and hidden behind other controls -->
-            <input type="file"
-                   id="filePicker"
-                   accept="text/plain">
+        <input type="button"
+               value="New File"
+               onclick="clearEditbox()">
 
-            <!-- triggers file picker above -->
-            <input type="button"
-                   value="Open File"
-                   onclick="pickFile()">
+        <!-- triggers above file picker control -->
+        <input type="button"
+               value="Open File"
+               onclick="selectFile()">
 
-            <input type="button"
-                   value="Save to Downloads"
-                   onclick="downloadFile()">
+        <input type="button"
+               value="Save to Downloads"
+               onclick="downloadFile()">
 
-            <label for="fileName">Current File:</label>
-            <input type="text"
-                   id="fileName">
+        <label for="filename">Current File:</label>
+        <input type="text"
+               id="filename">
 
-        </div>
-        <div id="editBox"
-             contenteditable="true"
-             spellcheck="false"></div>
-    </div>
+    </div><!-- end of toolbar -->
 
+    <div id="editbox"
+         contenteditable="true"
+         spellcheck="false"></div>
+
+</div><!-- end of container -->
 </body>
 </html>
-
-
-
-
-
-
-
-
-
