@@ -13,6 +13,7 @@
 
 body, input {
     font-family: "Courier New", Courier, monospace;
+    font-size:   12pt;
 }
 
 /* top-level flexbox */
@@ -55,18 +56,20 @@ body, input {
 /* -------------------------------------------------------------------------- */
 /* colors for keywords, literals, variables, etc. */
 
-.keyword        { color: #2020E7; }  /* blue   */
+#editbox { background-color: #F9F9F9; }  /* light gray */
+
+.keyword        { color: #1B1BFF; }  /* blue   */
 .literal        { color: #D00000; }  /* red    */
-.localVariable  { color: #C08000; }  /* gold   */
-.globalVariable { color: #775000; }  /* brown  */
-.tagType        { color: #20A0A0; }  /* cyan   */
-.enumConstant   { color: #7710B0; }  /* purple */
-.typedef        { color: #20A0A0; }  /* cyan   */
-.function       { color: #D00000; }  /* red    */
-.parameter      { color: #C08000; }  /* gold   */
-.preprocessor   { color: #636363; }  /* gray   */
-.macro          { color: #7710B0; }  /* purple */
-.comment        { color: #008000; }  /* green  */
+.localVariable  { color: #E717E7; }  /* pink   */
+.globalVariable { color: #E76700; }  /* orange */
+.tagType        { color: #009797; }  /* teal   */
+.enumConstant   { color: #9700D0; }  /* purple */
+.typedef        { color: #009797; }  /* teal   */
+.function       { color: #E76700; }  /* orange */
+.parameter      { color: #6B6B6B; }  /* gray   */
+.preprocessor   { color: #6B6B6B; }  /* gray   */
+.macro          { color: #9700D0; }  /* purple */
+.comment        { color: #008B00; }  /* green  */
 
 /* -------------------------------------------------------------------------- */
     </style>
@@ -142,7 +145,7 @@ const linebreakRegex = /<\/?div>|<br>/;  // global flag not needed
 
 // matches both single and multi-line comments
 const commentRegex = /\/\/.*?(?:<\/?div>|$)|\/\*.*?\*\//g;
-const numberRegex  = /(?<![A-Za-z_])-?\.?\d[A-Za-z\d.-]*/g;
+const numberRegex  = /(?<![A-Za-z_])-?\.?\b\d[A-Za-z\d.-]*/g;
 
 // matches both character and string literals
 // also allows for line continuation
@@ -183,20 +186,17 @@ function expandDataTypeRegex(typedefs, previous) {
 // -------------------------------------
 
 // create regex from multiple patterns with whitespace in between
-function createPatternRegex(patterns, separated = false) {
+function createPatternRegex(patterns) {
 
-    let whitespace = "(?:\\s|</?div>|<br>)";
-    if (separated === true) {
-        whitespace += "+";  // whitespace is required
-    } else {
-        whitespace += "*";  // patterns might run together
-    }
+    // might have whitespace, or patterns might run together
+    const whitespace = "(?:\\s|</?div>|<br>)*";
 
     let sequence = "";
     for (let i = 0; i < patterns.length - 1; i++) {
         sequence += patterns[i] + whitespace;
     }
 
+    // add final pattern to end and return as global regex
     return new RegExp(sequence + patterns[patterns.length - 1], "g");
 }
 
@@ -204,13 +204,16 @@ function createPatternRegex(patterns, separated = false) {
 const identifierToken = "\\b([A-Za-z_]\\w*)";
 
 // PATTERN: enum/struct/union followed by identifier
-// whitespace is required
 const tagTypeRegex = createPatternRegex(
-    [ "\\b(?:enum|struct|union)", identifierToken ], true);
+    [ "\\b(?:enum|struct|union)", identifierToken ]);
+
+// PATTERN: struct/union followed by optional identifer and open brace
+const compositeRegex = createPatternRegex(
+    [ "\\b(?:struct|union)", identifierToken + "?", "\\{" ]);
 
 // PATTERN: optional identifier followed by one of: {[=&,;
 // semicolon terminates declaration
-// ampersand needed to avoid matching any HTML entities
+// ampersand needed to avoid matching HTML entities
 const variableRegex = createPatternRegex(
     [ identifierToken + "?", "([{[=&,;])" ]);
 
@@ -228,14 +231,14 @@ const enumConstantRegex = createPatternRegex(
 const functionRegex = createPatternRegex(
     [ identifierToken, "\\(" ]);
 
+// PATTERN: identifier followed by text in parentheses and open brace
+const localScopeRegex = createPatternRegex(
+    [ identifierToken, "\\([^)]*\\)", "\\{" ]);
+
 // PATTERN: open parenthesis followed by asterisk, identifier,
 //              closed parenthesis, and second open parenthesis
 const callbackRegex = createPatternRegex(
     [ "\\([^*)]*\\*", identifierToken, "\\)", "\\(" ]);
-
-// PATTERN: identifier followed by text in parentheses and open brace
-const localScopeRegex = createPatternRegex(
-    [ identifierToken, "\\([^)]*\\)", "\\{" ]);
 
 // -----------------------------------------------------------------------------
 // global data
@@ -741,6 +744,11 @@ function offsetFromRange(editbox, range) {
 // return selection range for target location
 function buildRange(node, offset) {
 
+    // check if offset out of bounds
+    if (offset > node.textContent.length) {
+        offset = node.textContent.length;
+    }
+
     const range = document.createRange();
     range.setEnd(node, offset);
     range.collapse();  // collapse to end point set above
@@ -817,40 +825,55 @@ function maintainCaret(editbox, html) {
 // -----------------------------------------------------------------------------
 // style editbox
 
-// simplify function pointers to look like other variables
-function sanitizeFunctionPointers() {
+// simplify struct/union definitions and function pointers
+function sanitizeCurrentText() {
 
-    // find next potential function pointer in file
+    // find structure and union definitions
+    for (let match = compositeRegex.exec(text);
+             match !== null;
+             match = compositeRegex.exec(text)) {
+
+        // extract definition and remove semicolons
+        const start      = compositeRegex.lastIndex;
+        const stop       = findCloser(start, "{", "}") - 1;
+        const definition = text
+            .substring(start, stop)
+            .replace(/;/g, " ");
+
+        // replace definition in text with cleaned copy
+        text = text.substring(0, start) +  // text before match
+               definition               +  // cleaned copy
+               text.substring(stop);       // text after match
+    }
+
+    // find function pointers
     for (let match = callbackRegex.exec(text);
              match !== null;
              match = callbackRegex.exec(text)) {
 
-        // get length of prefix, and start and stop indices
+        // get length of prefix and indices for identifier token
         const prefix = match[0].indexOf(match[1]);
         const start  = match.index + prefix;     // beginning of token
         const stop   = start + match[1].length;  // end of token
 
-        // check if matching token is valid function pointer
+        // check if match is valid function pointer
         if (canStyle(start, stop) === false) {
 
-            // if not valid, resume search at end of invalid token
+            // if not valid, resume search at end of token
             callbackRegex.lastIndex = stop;
             continue;
         }
 
-        // get length of suffix and index for end of declaration
+        // find parenthesis at end of function pointer declaration
         const closer = findCloser(callbackRegex.lastIndex, "(", ")");
-        const suffix = closer - stop;
-
-        alert("text length = " + text.length + ", closer = " + closer);
 
         // replace function pointer prefix and suffix with spaces
-        // keep token and text before/after match unchanged
-        text = text.substring(0, match.index) +     // before match
-               " ".repeat(prefix) +  match[1] + " ".repeat(suffix) +
-               text.substring(closer);              // after match
-
-        alert(text);
+        // keep identifier token, and all text before/after pointer
+        text = text.substring(0, match.index) +  // text before match
+               " ".repeat(prefix)             +  // replace prefix
+               match[1]                       +  // keep token
+               " ".repeat(closer - stop)      +  // replace suffix
+               text.substring(closer);           // text after match
     }
 }
 
@@ -905,6 +928,7 @@ function styleLocalScopes() {
     // style function names - both known and probable
     quickStyle( "function", functions.join("|"));
     styleGroups("function", addFunction, functionRegex);
+
     scope.clear();
 }
 
@@ -935,7 +959,7 @@ function styleEditbox() {
     styleGroups( "tagType", addGroup, tagTypeRegex);
 
     // style local identifiers and function names
-    sanitizeFunctionPointers();  // simplify function pointers first
+    sanitizeCurrentText();  // simplify certain things first
     styleLocalScopes();
 
     // style global enumerations
