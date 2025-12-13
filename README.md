@@ -14,6 +14,7 @@ Syntax elements identified and highlighted by this program include:
 * enumeration constants
 * function names
 * function parameters
+* function pointers
 
 Additionally, it implements identifier shadowing/masking; local variables hide global variables and are correctly colored as local variables.
 
