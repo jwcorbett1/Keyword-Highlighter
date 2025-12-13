@@ -7,8 +7,8 @@ Syntax elements identified and highlighted by this program include:
 * comments
 * keywords
 * literals (character, string, and numeric)
-* preprocessor directives and macros (separate coloring for each)
-* local and global variables (again, separate coloring for each)
+* preprocessor directives and macros (separate coloring for both)
+* local and global variables (again, separate coloring for both)
 * typedefs
 * tag types (structures, unions, and enumerations)
 * enumeration constants
