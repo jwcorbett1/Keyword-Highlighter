@@ -830,25 +830,14 @@ function maintainCaret(editbox, html) {
 // -----------------------------------------------------------------------------
 // style editbox
 
-// needed if user copy/pastes into typing area
-function normalizeCurrentText(editbox) {
+// convert newlines if user copy/pastes into typing area
+function getUnstyledText(editbox) {
 
-    const begin = /^(?!<div>)/;    // doesn't begin with <div>
-    const end   = /(?!<\/div>)$/;  // doesn't end with </div>
-
-    let unstyled = editbox.innerHTML
+    const unstyled = editbox.innerHTML
         .replace(stylingRegex, "")              // remove styling
         .replace(newlineRegex, "</div><div>");  // convert newlines
 
-    // add opening/closing <div> tags if needed
-    if (begin.test(unstyled)) {
-        unstyled = "<div>" + unstyled;
-    }
-    if (end.test(unstyled)) {
-        unstyled += "</div>";
-    }
-
-    // insert <br> tags and return normalized text
+    // insert any missing <br> tags and return
     return unstyled.replace(/<div><\/div>/g, "<div><br></div>");
 }
 
@@ -966,7 +955,7 @@ function styleEditbox() {
 
     // remove old styling and prepare for next styling pass
     const editbox  = document.getElementById("editbox");
-    const unstyled = normalizeCurrentText(editbox);
+    const unstyled = getUnstyledText(editbox);
     initializeGlobals(unstyled);
 
     // style comments and hide from future searches
