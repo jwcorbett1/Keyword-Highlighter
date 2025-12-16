@@ -18,4 +18,4 @@ Syntax elements identified and highlighted by this program include:
 
 Additionally, it implements identifier shadowing/masking; local variables hide global variables and are correctly colored as local variables.
 
-The primary purpose of this project was to improve my understanding of regular expressions.  Rather than implementing a tokenizer/parser system, this program applies regular expressions extensively to identify language elements within the user's text.  It also works directly with raw HTML pulled directly from the main editable \<div\>, which provided some interesting challenges.  Completing this project was a very informative experience.
+The primary purpose of this project was to improve my understanding of regular expressions.  Rather than implementing a tokenizer/parser system, this program applies regular expressions extensively to identify language elements within the user's text.  It also works directly with raw HTML pulled directly from the main editable \<div\>, which provided some interesting challenges.
