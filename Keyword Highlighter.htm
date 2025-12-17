@@ -699,6 +699,161 @@ function styleIdentifiers(style, action, phrase, regex, expand = false) {
 }
 
 // -----------------------------------------------------------------------------
+// style editbox
+
+// simplify struct/union definitions and function pointers
+function sanitizeCurrentText() {
+
+    // find structure and union definitions
+    for (let match = compositeRegex.exec(text);
+             match !== null;
+             match = compositeRegex.exec(text)) {
+
+        // extract definition and remove semicolons
+        const start      = compositeRegex.lastIndex;
+        const stop       = findCloser(start, "{", "}") - 1;
+        const definition = text
+            .substring(start, stop)
+            .replace(/;/g, " ");
+
+        // replace definition in text with cleaned copy
+        text = text.substring(0, start) +  // text before match
+               definition               +  // cleaned copy
+               text.substring(stop);       // text after match
+    }
+
+    // find function pointers
+    for (let match = callbackRegex.exec(text);
+             match !== null;
+             match = callbackRegex.exec(text)) {
+
+        // get length of prefix and indices for identifier token
+        const prefix = match[0].indexOf(match[1]);
+        const start  = match.index + prefix;     // beginning of token
+        const stop   = start + match[1].length;  // end of token
+
+        // check if match is valid function pointer
+        if (canStyle(start, stop) === false) {
+
+            // if not valid, resume search at end of token
+            callbackRegex.lastIndex = stop;
+            continue;
+        }
+
+        // find parenthesis at end of function pointer declaration
+        const closer = findCloser(callbackRegex.lastIndex, "(", ")");
+
+        // replace function pointer prefix and suffix with spaces
+        // keep identifier token, and all text before/after pointer
+        text = text.substring(0, match.index) +  // text before match
+               " ".repeat(prefix)             +  // replace prefix
+               match[1]                       +  // keep token
+               " ".repeat(closer - stop)      +  // replace suffix
+               text.substring(closer);           // text after match
+    }
+}
+
+// style function names and identifiers with local scope
+function styleLocalScopes() {
+
+    const functions    = [];             // collect function names
+    let   stop         = 0;              // track end of previous scope
+    let   currentTypes = dataTypeRegex;  // track added global typedefs
+
+    // find beginning of next local scope
+    for (let match = localScopeRegex.exec(text);
+             match !== null;
+             match = localScopeRegex.exec(text)) {
+
+        // check if match is valid function
+        if (addGroup("function", match) === false) {
+
+            // if not valid, resume search at end of invalid token
+            localScopeRegex.lastIndex = match.index + match[1].length;
+            continue;
+        }
+        functions.push(match[1]);  // add function name to list
+
+        // find global typedefs between previous and current scopes
+        scope.set(stop, match.index);
+        currentTypes = styleIdentifiers(
+            "",             // parameter ignored by findTypedefs()
+            findTypedefs,
+            currentTypes,
+            variableRegex,  // typedefs look like variable declarations
+            true);          // expand data type regex and return result
+
+        // move scope to function's body
+        stop = findCloser(localScopeRegex.lastIndex, "{", "}");
+        scope.set(localScopeRegex.lastIndex, stop - 1);
+
+        // style parameters and local enumerations
+        styleTokens("parameter", match, parameterRegex);
+        styleIdentifiers("enumConstant",
+            styleTokens, enumRegex, enumConstantRegex);
+
+        // style local variables and local typedefs
+        // current types expanded temporarily until end of current scope
+        styleIdentifiers([ "localVariable", "typedef" ],
+            styleVariables, currentTypes, variableRegex, true);
+
+        // resume search at end of local scope
+        localScopeRegex.lastIndex = stop;
+    }
+
+    // style function names - both known and probable
+    quickStyle( "function", functions.join("|"));
+    styleGroups("function", addFunction, functionRegex);
+
+    scope.clear();
+}
+
+// update styling for text currently entered in typing area
+function styleEditbox() {
+
+    // get text, remove styling, and normalize tag structure
+    const editbox  = document.getElementById("editbox");
+    const unstyled = editbox.innerHTML
+        .replace(stylingRegex,    "")
+        .replace(newlineRegex,    "</div><div>")
+        .replace(/<div><\/div>/g, "<div><br></div>");
+
+    initializeGlobals(unstyled);
+
+    // style comments and hide from future searches
+    styleMatches("comment", hideMatch, commentRegex);
+
+    // style string and numeric literals
+    styleMatches("literal", splitMatch, stringRegex);
+    styleGroups( "literal", addGroup,   includeFileRegex);
+    styleMatches("literal", addMatch,   numberRegex);
+
+    // style preprocessor directives, including macros
+    styleMatches("preprocessor", addMatch, preprocessorRegex);
+    styleGroups( "macro",        addMacro, macroRegex);
+
+    // style keywords and tag types
+    styleMatches("keyword", addMatch, keywordRegex);
+    styleGroups( "tagType", addGroup, tagTypeRegex);
+
+    // style local identifiers and function names
+    sanitizeCurrentText();  // simplify certain things first
+    styleLocalScopes();
+
+    // style global enumerations
+    styleIdentifiers("enumConstant",
+        styleTokens, enumRegex, enumConstantRegex);
+
+    // style global variables and global typedefs
+    styleIdentifiers([ "globalVariable", "typedef" ],
+        styleVariables, dataTypeRegex, variableRegex, true);
+
+    // replace previous text with newly styled text
+    // maintainCaret() defined in next section below
+    maintainCaret(editbox, applyStyles(unstyled));
+}
+
+// -----------------------------------------------------------------------------
 // maintain caret position
 
 // get length of node in characters, accounting for linebreaks
@@ -828,166 +983,92 @@ function maintainCaret(editbox, html) {
 }
 
 // -----------------------------------------------------------------------------
-// style editbox
 
-// convert newlines if user copy/pastes into typing area
-function getUnstyledText(editbox) {
+// return current position of caret as Range object
+function getCaretPosition(editbox) {
 
-    const unstyled = editbox.innerHTML
-        .replace(stylingRegex, "")              // remove styling
-        .replace(newlineRegex, "</div><div>");  // convert newlines
+    // check if caret is active
+    const selection = window.getSelection();
+    if (selection            === null   ||
+        selection.type       === "None" ||
+        selection.rangeCount === 0) {
 
-    // insert any missing <br> tags and return
-    return unstyled.replace(/<div><\/div>/g, "<div><br></div>");
-}
-
-// simplify struct/union definitions and function pointers
-function sanitizeCurrentText() {
-
-    // find structure and union definitions
-    for (let match = compositeRegex.exec(text);
-             match !== null;
-             match = compositeRegex.exec(text)) {
-
-        // extract definition and remove semicolons
-        const start      = compositeRegex.lastIndex;
-        const stop       = findCloser(start, "{", "}") - 1;
-        const definition = text
-            .substring(start, stop)
-            .replace(/;/g, " ");
-
-        // replace definition in text with cleaned copy
-        text = text.substring(0, start) +  // text before match
-               definition               +  // cleaned copy
-               text.substring(stop);       // text after match
+        return null;
     }
 
-    // find function pointers
-    for (let match = callbackRegex.exec(text);
-             match !== null;
-             match = callbackRegex.exec(text)) {
+    // check if caret inside editbox
+    const range = selection.getRangeAt(0);
+    if (editbox.contains(range.endContainer) === false) {
+        return null;
+    }
 
-        // get length of prefix and indices for identifier token
-        const prefix = match[0].indexOf(match[1]);
-        const start  = match.index + prefix;     // beginning of token
-        const stop   = start + match[1].length;  // end of token
+    return range.cloneRange();  // return caret position
+}
 
-        // check if match is valid function pointer
-        if (canStyle(start, stop) === false) {
+// convert caret position to line and column numbers
+function buildCaretString() {
 
-            // if not valid, resume search at end of token
-            callbackRegex.lastIndex = stop;
-            continue;
+    // get caret position
+    const editbox = document.getElementById("editbox");
+    const range   = getCaretPosition(editbox);
+    if (range === null) {
+        return "";  // no position to report
+    }
+
+    // step forward through node hierarchy while counting lines
+    let line   = 1;
+    let column = 1;
+    let node   = editbox.firstChild;
+    while (node !== null) {
+
+        // account for previous nodes not inside <div> tags
+        if (node.nodeName                 === "DIV" &&
+            node.previousSibling          !== null  &&
+            node.previousSibling.nodeName !== "DIV") {
+
+            line++;
+            column = 1;  // must reset column number
         }
 
-        // find parenthesis at end of function pointer declaration
-        const closer = findCloser(callbackRegex.lastIndex, "(", ")");
+        // is caret directly within contents of current node?
+        if (node === range.endContainer) {
 
-        // replace function pointer prefix and suffix with spaces
-        // keep identifier token, and all text before/after pointer
-        text = text.substring(0, match.index) +  // text before match
-               " ".repeat(prefix)             +  // replace prefix
-               match[1]                       +  // keep token
-               " ".repeat(closer - stop)      +  // replace suffix
-               text.substring(closer);           // text after match
-    }
-}
-
-// -------------------------------------
-
-// style function names and identifiers with local scope
-function styleLocalScopes() {
-
-    const functions    = [];             // collect function names
-    let   stop         = 0;              // track end of previous scope
-    let   currentTypes = dataTypeRegex;  // track added global typedefs
-
-    // find beginning of next local scope
-    for (let match = localScopeRegex.exec(text);
-             match !== null;
-             match = localScopeRegex.exec(text)) {
-
-        // check if match is valid function
-        if (addGroup("function", match) === false) {
-
-            // if not valid, resume search at end of invalid token
-            localScopeRegex.lastIndex = match.index + match[1].length;
-            continue;
+            column += range.endOffset;
+            return "Ln " + line + ", Col " + column;
         }
-        functions.push(match[1]);  // add function name to list
 
-        // find global typedefs between previous and current scopes
-        scope.set(stop, match.index);
-        currentTypes = styleIdentifiers(
-            "",             // parameter ignored by findTypedefs()
-            findTypedefs,
-            currentTypes,
-            variableRegex,  // typedefs look like variable declarations
-            true);          // expand data type regex and return result
+        // is caret past current node?
+        else if (node.contains(range.endContainer) === false) {
 
-        // move scope to function's body
-        stop = findCloser(localScopeRegex.lastIndex, "{", "}");
-        scope.set(localScopeRegex.lastIndex, stop - 1);
+            // should never happen, but just in case
+            if (node.nextSibling === null) {
+                break;
+            }
 
-        // style parameters and local enumerations
-        styleTokens("parameter", match, parameterRegex);
-        styleIdentifiers("enumConstant",
-            styleTokens, enumRegex, enumConstantRegex);
+            if (node.nodeName === "DIV") {  // handle <div> nodes
+                line++;
+                column = 1;
+            } else {         // sum up length of other node types
+                column += nodeLength(node);
+            }
 
-        // style local variables and local typedefs
-        // current types expanded temporarily until end of current scope
-        styleIdentifiers([ "localVariable", "typedef" ],
-            styleVariables, currentTypes, variableRegex, true);
+            node = node.nextSibling;  // step forward
+        }
 
-        // resume search at end of local scope
-        localScopeRegex.lastIndex = stop;
+        else {  // caret must be within child node
+
+            // should never happen, but just in case
+            if (node.firstChild === null) {
+                break;
+            }
+
+            // go down 1 level for more fine-grain control
+            node = node.firstChild;
+        }
     }
 
-    // style function names - both known and probable
-    quickStyle( "function", functions.join("|"));
-    styleGroups("function", addFunction, functionRegex);
-
-    scope.clear();
-}
-
-// update styling for text currently entered in typing area
-function styleEditbox() {
-
-    // remove old styling and prepare for next styling pass
-    const editbox  = document.getElementById("editbox");
-    const unstyled = getUnstyledText(editbox);
-    initializeGlobals(unstyled);
-
-    // style comments and hide from future searches
-    styleMatches("comment", hideMatch, commentRegex);
-
-    // style string and numeric literals
-    styleMatches("literal", splitMatch, stringRegex);
-    styleGroups( "literal", addGroup,   includeFileRegex);
-    styleMatches("literal", addMatch,   numberRegex);
-
-    // style preprocessor directives, including macros
-    styleMatches("preprocessor", addMatch, preprocessorRegex);
-    styleGroups( "macro",        addMacro, macroRegex);
-
-    // style keywords and tag types
-    styleMatches("keyword", addMatch, keywordRegex);
-    styleGroups( "tagType", addGroup, tagTypeRegex);
-
-    // style local identifiers and function names
-    sanitizeCurrentText();  // simplify certain things first
-    styleLocalScopes();
-
-    // style global enumerations
-    styleIdentifiers("enumConstant",
-        styleTokens, enumRegex, enumConstantRegex);
-
-    // style global variables and global typedefs
-    styleIdentifiers([ "globalVariable", "typedef" ],
-        styleVariables, dataTypeRegex, variableRegex, true);
-
-    // replace previous text with newly styled text
-    maintainCaret(editbox, applyStyles(unstyled));
+    // return default value on error or empty typing area
+    return "Ln 1, Col 1";
 }
 
 // -----------------------------------------------------------------------------
@@ -996,10 +1077,30 @@ function styleEditbox() {
 let hasChanges = false;  // dirty flag for typing area
 let updateTimer;         // debouncing timer
 
+// EVENT LISTENER: triggered by clicking on typing area
+function updateCaretPosition() {
+
+    document.getElementById("caretPosition")
+        .textContent = buildCaretString();
+}
+
+// EVENT LISTENER: triggered by pressing arrow keys
+function updateOnArrowKeys(event) {
+
+    switch (event.key) {
+        case "ArrowUp":
+        case "ArrowDown":
+        case "ArrowLeft":
+        case "ArrowRight":
+            updateCaretPosition();
+    }
+}
+
 // EVENT LISTENER: triggered by user typing
 function updateEditbox() {
 
-    hasChanges = true;  // set dirty flag
+    hasChanges = true;      // set dirty flag
+    updateCaretPosition();  // update caret position string
 
     // after no typing for 2 seconds, update styling
     clearTimeout(updateTimer);
@@ -1024,6 +1125,8 @@ function clearEditbox() {
     document.getElementById("editbox").innerHTML = "";
     document.getElementById("filename").value    = "NewFile.txt";
     hasChanges                                   = false;
+
+    updateCaretPosition();  // update caret position string
 }
 
 // -------------------------------------
@@ -1037,6 +1140,28 @@ function selectFile() {
 
     // simulate user clicking on hidden file picker control
     document.getElementById("filePicker").click();
+}
+
+// EVENT LISTENER: triggered when file finishes loading
+// "this" is FileReader object to which listener is attached
+function convertFile() {
+
+    // sanitize file data and convert newline characters
+    let fileData = this.result
+        .replace(/</g,         "&lt;")
+        .replace(/>/g,         "&gt;")
+        .replace(newlineRegex, "</div><div>");
+
+    // add opening/closing <div> tags and insert <br> tags
+    fileData = "<div>" + fileData + "</div>";
+    fileData = fileData.replace(/<div><\/div>/g, "<div><br></div>");
+
+    // load file data into typing area and clear dirty flag
+    document.getElementById("editbox").innerHTML = fileData;
+    hasChanges                                   = false;
+
+    styleEditbox();         // style newly loaded text
+    updateCaretPosition();  // update caret position string
 }
 
 // EVENT LISTENER: triggered by closing file picker dialog box
@@ -1057,26 +1182,9 @@ function uploadFile() {
 
     // create and initialize file reader object
     const fileReader = new FileReader();
-    fileReader.addEventListener("load", function() {
+    fileReader.addEventListener("load", convertFile);
 
-        // sanitize file data and convert newline characters
-        let fileData = fileReader.result
-            .replace(/</g,         "&lt;")
-            .replace(/>/g,         "&gt;")
-            .replace(newlineRegex, "</div><div>");
-
-        // add opening/closing <div> tags and insert <br> tags
-        fileData = "<div>" + fileData + "</div>";
-        fileData = fileData.replace(/<div><\/div>/g, "<div><br></div>");
-
-        // load file data into typing area and clear dirty flag
-        document.getElementById("editbox").innerHTML = fileData;
-        hasChanges                                   = false;
-
-        styleEditbox();  // style newly loaded text
-    });
-
-    // read selected file, which triggers "load" listener above
+    // read selected file, which triggers convertFile()
     fileReader.readAsText(this.files[0]);
     this.value = "";  // reset file picker control for reuse
 }
@@ -1161,8 +1269,10 @@ function initializePage() {
     document.getElementById("filePicker")
         .addEventListener("change", uploadFile);
 
-    document.getElementById("editbox")
-        .addEventListener("input", updateEditbox);
+    const editbox = document.getElementById("editbox");
+    editbox.addEventListener("input", updateEditbox);
+    editbox.addEventListener("click", updateCaretPosition);
+    editbox.addEventListener("keyup", updateOnArrowKeys);
 
     clearEditbox();  // same as clicking "New File" button
 }
@@ -1198,9 +1308,12 @@ function initializePage() {
         <input type="text"
                id="filename">
 
+        <span id="caretPosition"></span>
+
     </div><!-- end of toolbar -->
 
     <div id="editbox"
+         tabindex="0"
          contenteditable="true"
          spellcheck="false"></div>
 
