@@ -283,6 +283,8 @@ const styles = [];           // array of Style objects
 const scope  = new Scope();  // indices of current local scope
 const search = new Scope();  // indices for next filter function call
 
+// -------------------------------------
+
 // prepare for next styling pass
 function initializeGlobals(unstyled) {
 
@@ -290,6 +292,25 @@ function initializeGlobals(unstyled) {
     styles.length = 0;   // discard previous Style objects
     scope.clear();
     search.clear();
+}
+
+// is region outside of any existing Style object?
+function canStyle(start, stop) {
+
+    for (let i = 0; i < styles.length; i++) {
+
+        if (start < styles[i].stop && stop > styles[i].start) {
+            return false;  // cannot style - regions would overlap
+        }
+    }
+
+    return true;  // could style - no overlap
+}
+
+// create Style object from parameters and append to end of array
+function addStyle(style, start, stop) {
+
+    styles.push(new Style(style, start, stop));
 }
 
 // build finished text based on current styling
@@ -327,19 +348,6 @@ function applyStyles(unstyled) {
 // -----------------------------------------------------------------------------
 // style entire regex match
 
-// is region outside of any existing Style object?
-function canStyle(start, stop) {
-
-    for (let i = 0; i < styles.length; i++) {
-
-        if (start < styles[i].stop && stop > styles[i].start) {
-            return false;  // cannot style - regions would overlap
-        }
-    }
-
-    return true;  // could style - no overlap
-}
-
 // action functions are passed as arguments to filter functions
 // filter functions execute regex and call action for each match found
 
@@ -350,7 +358,7 @@ function addMatch(style, start, stop) {
         return false;  // cannot add - text already styled
     }
 
-    styles.push(new Style(style, start, stop));
+    addStyle(style, start, stop);
     return true;  // style added successfully
 }
 
@@ -375,7 +383,7 @@ function splitMatch(style, start, stop) {
         start = text.indexOf(lines[i], stop);
         stop  = start + lines[i].length;
 
-        styles.push(new Style(style, start, stop));  // add line
+        addStyle(style, start, stop);  // add styling
     }
 
     return true;  // style(s) added successfully
@@ -621,6 +629,8 @@ function findTokens(regex) {
     return tokens;  // no declaration terminator found
 }
 
+// -------------------------------------
+
 // ACTION: extract typedefs from match - first parameter ignored
 function findTypedefs(unused, match, regex) {
 
@@ -854,7 +864,7 @@ function styleEditbox() {
 }
 
 // -----------------------------------------------------------------------------
-// maintain caret position
+// manage caret position
 
 // get length of node in characters, accounting for linebreaks
 function nodeLength(node) {
@@ -982,10 +992,10 @@ function maintainCaret(editbox, html) {
     selection.addRange(rangeFromOffset(editbox, offset));
 }
 
-// -----------------------------------------------------------------------------
+// -------------------------------------
 
-// return current position of caret as Range object
-function getCaretPosition(editbox) {
+// convert caret position to line/column numbers and display
+function buildCaretString(editbox) {
 
     // check if caret is active
     const selection = window.getSelection();
@@ -993,29 +1003,17 @@ function getCaretPosition(editbox) {
         selection.type       === "None" ||
         selection.rangeCount === 0) {
 
-        return null;
+        return "";  // no position to report
     }
 
     // check if caret inside editbox
     const range = selection.getRangeAt(0);
     if (editbox.contains(range.endContainer) === false) {
-        return null;
-    }
 
-    return range.cloneRange();  // return caret position
-}
-
-// convert caret position to line and column numbers
-function buildCaretString() {
-
-    // get caret position
-    const editbox = document.getElementById("editbox");
-    const range   = getCaretPosition(editbox);
-    if (range === null) {
         return "";  // no position to report
     }
 
-    // step forward through node hierarchy while counting lines
+    // step forward through node hierarchy counting lines/columns
     let line   = 1;
     let column = 1;
     let node   = editbox.firstChild;
@@ -1030,19 +1028,17 @@ function buildCaretString() {
             column = 1;  // must reset column number
         }
 
-        // is caret directly within contents of current node?
+        // is caret inside current node?
         if (node === range.endContainer) {
 
-            column += range.endOffset;
-            return "Ln " + line + ", Col " + column;
-        }
+            return "Ln "    +  line   +
+                   ", Col " + (column + range.endOffset);
 
-        // is caret past current node?
-        else if (node.contains(range.endContainer) === false) {
+        // is caret after current node?
+        } else if (node.contains(range.endContainer) === false) {
 
-            // should never happen, but just in case
             if (node.nextSibling === null) {
-                break;
+                break;  // should never happen, but just in case
             }
 
             if (node.nodeName === "DIV") {  // handle <div> nodes
@@ -1053,13 +1049,12 @@ function buildCaretString() {
             }
 
             node = node.nextSibling;  // step forward
-        }
 
-        else {  // caret must be within child node
+        // caret must be inside nested child
+        } else {
 
-            // should never happen, but just in case
             if (node.firstChild === null) {
-                break;
+                break;  // should never happen, but just in case
             }
 
             // go down 1 level for more fine-grain control
@@ -1077,23 +1072,28 @@ function buildCaretString() {
 let hasChanges = false;  // dirty flag for typing area
 let updateTimer;         // debouncing timer
 
-// EVENT LISTENER: triggered by clicking on typing area
-function updateCaretPosition() {
+// EVENT LISTENER: triggered by
+//     clicking on typing area or pressing arrow keys
+function updateCaretPosition(event = null) {
 
-    document.getElementById("caretPosition")
-        .textContent = buildCaretString();
-}
+    // for key down events, check which key was pressed
+    if (event !== null && "key" in event === true) {
+        switch (event.key) {
 
-// EVENT LISTENER: triggered by pressing arrow keys
-function updateOnArrowKeys(event) {
+            case "ArrowUp":
+            case "ArrowDown":
+            case "ArrowLeft":
+            case "ArrowRight":
+                break;   // need to update displayed position
 
-    switch (event.key) {
-        case "ArrowUp":
-        case "ArrowDown":
-        case "ArrowLeft":
-        case "ArrowRight":
-            updateCaretPosition();
+            default:
+                return;  // nothing else should affect caret
+        }
     }
+
+    // calculate and show line/column numbers on toolbar
+    document.getElementById("caretPosition").textContent =
+        buildCaretString(document.getElementById("editbox"));
 }
 
 // EVENT LISTENER: triggered by user typing
@@ -1270,9 +1270,9 @@ function initializePage() {
         .addEventListener("change", uploadFile);
 
     const editbox = document.getElementById("editbox");
-    editbox.addEventListener("input", updateEditbox);
-    editbox.addEventListener("click", updateCaretPosition);
-    editbox.addEventListener("keyup", updateOnArrowKeys);
+    editbox.addEventListener("input",   updateEditbox);
+    editbox.addEventListener("click",   updateCaretPosition);
+    editbox.addEventListener("keydown", updateCaretPosition);
 
     clearEditbox();  // same as clicking "New File" button
 }
@@ -1313,7 +1313,6 @@ function initializePage() {
     </div><!-- end of toolbar -->
 
     <div id="editbox"
-         tabindex="0"
          contenteditable="true"
          spellcheck="false"></div>
 
