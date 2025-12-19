@@ -37,7 +37,8 @@ body, input {
 
 /* container for interface controls */
 #toolbar {
-    flex-grow: 0;  /* minimize footprint */
+    flex-grow: 0;         /* minimize footprint */
+    position:  relative;  /* to position file picker */
 }
 
 /* hidden behind other controls */
@@ -47,9 +48,23 @@ body, input {
     opacity:  0;  /* also invisible */
 }
 
+/* container for filename textbox and its label */
+#currentFile {
+    display: inline-block;
+}
+
 #filename {
     width:   40em;
     outline: none;
+}
+
+/* add space between interface controls when arranged vertically */
+input {
+    margin: 0 0 0.4em;
+}
+
+#caretPosition {
+    display: inline-block;
     margin:  0 0 0.8em;  /* add space between toolbar and editbox */
 }
 
@@ -139,9 +154,10 @@ const otherKeywords = [
 // -----------------------------------------------------------------------------
 // regular expressions
 
-const filenameRegex  = /[\\\/:*?"<>|]/g;  // invalid symbols
 const newlineRegex   = /\r*\n|\r/g;
 const linebreakRegex = /<\/?div>|<br>/;   // global flag not needed
+const emptyLineRegex = /<div><\/div>/g;   // missing <br> tags
+const filenameRegex  = /[\\\/:*?"<>|]/g;  // common invalid symbols
 
 // some browsers insert <font> tags during editing
 const stylingRegex = /<\/?span[^>]*>|<\/?font[^>]*>/g;
@@ -279,19 +295,37 @@ class Style extends Scope {
     }
 }
 
-const styles = [];           // array of Style objects
-const scope  = new Scope();  // indices of current local scope
-const search = new Scope();  // indices for next filter function call
+// content of separate file to also scan during styling
+// used to load header files and import macros, typedefs, etc.
+class Context {
+
+    constructor(filename, fileData = "") {
+        this.filename = filename;
+        this.fileData = fileData;
+    }
+}
+
+const contexts = [];           // array of Context objects
+const styles   = [];           // array of Style objects
+const scope    = new Scope();  // indices of current local scope
+const search   = new Scope();  // indices of current search scope
 
 // -------------------------------------
 
 // prepare for next styling pass
-function initializeGlobals(unstyled) {
+function initializeGlobals(html) {
+
+    const unstyled = html
+        .replace(stylingRegex,   "")
+        .replace(newlineRegex,   "</div><div>")
+        .replace(emptyLineRegex, "<div><br></div>");
 
     text          = unstyled;
     styles.length = 0;   // discard previous Style objects
     scope.clear();
     search.clear();
+
+    return unstyled;
 }
 
 // is region outside of any existing Style object?
@@ -343,6 +377,21 @@ function applyStyles(unstyled) {
     }
 
     return html;
+}
+
+function getContext(filename) {
+
+    let context = contexts.find(function(c) {
+        return c.filename === filename; });
+
+    if (context !== undefined) {
+        return context;
+    } else {
+
+        context = new Context(filename);
+        contexts.push(context);
+        return context;
+    }
 }
 
 // -----------------------------------------------------------------------------
@@ -821,14 +870,9 @@ function styleLocalScopes() {
 // update styling for text currently entered in typing area
 function styleEditbox() {
 
-    // get text, remove styling, and normalize tag structure
+    // get current text, remove styling, and normalize tag structure
     const editbox  = document.getElementById("editbox");
-    const unstyled = editbox.innerHTML
-        .replace(stylingRegex,    "")
-        .replace(newlineRegex,    "</div><div>")
-        .replace(/<div><\/div>/g, "<div><br></div>");
-
-    initializeGlobals(unstyled);
+    const unstyled = initializeGlobals(editbox.innerHTML);
 
     // style comments and hide from future searches
     styleMatches("comment", hideMatch, commentRegex);
@@ -1003,14 +1047,14 @@ function buildCaretString(editbox) {
         selection.type       === "None" ||
         selection.rangeCount === 0) {
 
-        return "";  // no position to report
+        return "&nbsp;";  // no position to report
     }
 
     // check if caret inside editbox
     const range = selection.getRangeAt(0);
     if (editbox.contains(range.endContainer) === false) {
 
-        return "";  // no position to report
+        return "&nbsp;";  // no position to report
     }
 
     // step forward through node hierarchy counting lines/columns
@@ -1070,7 +1114,6 @@ function buildCaretString(editbox) {
 // event handlers
 
 let hasChanges = false;  // dirty flag for typing area
-let updateTimer;         // debouncing timer
 
 // EVENT LISTENER: triggered by
 //     clicking on typing area or pressing arrow keys
@@ -1092,15 +1135,17 @@ function updateCaretPosition(event = null) {
     }
 
     // calculate and show line/column numbers on toolbar
-    document.getElementById("caretPosition").textContent =
+    document.getElementById("caretPosition").innerHTML =
         buildCaretString(document.getElementById("editbox"));
 }
+
+let updateTimer;  // debouncing timer
 
 // EVENT LISTENER: triggered by user typing
 function updateEditbox() {
 
     hasChanges = true;      // set dirty flag
-    updateCaretPosition();  // update caret position string
+    updateCaretPosition();  // update caret position text
 
     // after no typing for 2 seconds, update styling
     clearTimeout(updateTimer);
@@ -1126,7 +1171,7 @@ function clearEditbox() {
     document.getElementById("filename").value    = "NewFile.txt";
     hasChanges                                   = false;
 
-    updateCaretPosition();  // update caret position string
+    updateCaretPosition();  // update caret position text
 }
 
 // -------------------------------------
@@ -1138,31 +1183,40 @@ function selectFile() {
         return;
     }
 
+    const filePicker = document.getElementById("filePicker");
+
     // simulate user clicking on hidden file picker control
-    document.getElementById("filePicker").click();
+    filePicker.disabled = false;
+    filePicker.click();
+    filePicker.disabled = true;
 }
 
-// EVENT LISTENER: triggered when file finishes loading
-// "this" is FileReader object to which listener is attached
-function convertFile() {
+// load file data into Context object with matching filename
+function saveContext(filename, fileData) {
 
-    // sanitize file data and convert newline characters
-    let fileData = this.result
-        .replace(/</g,         "&lt;")
-        .replace(/>/g,         "&gt;")
-        .replace(newlineRegex, "</div><div>");
+    const context    = getContext(filename);
+    context.fileData = fileData;
+}
 
-    // add opening/closing <div> tags and insert <br> tags
-    fileData = "<div>" + fileData + "</div>";
-    fileData = fileData.replace(/<div><\/div>/g, "<div><br></div>");
+// load file data into main typing area and update filename textbox
+function displayFile(filename, fileData) {
+
+    // update filename control
+    if (filename.indexOf(".") === -1) {
+        filename += ".";  // denotes no file extension
+    }
+    document.getElementById("filename").value = filename;
 
     // load file data into typing area and clear dirty flag
     document.getElementById("editbox").innerHTML = fileData;
     hasChanges                                   = false;
 
     styleEditbox();         // style newly loaded text
-    updateCaretPosition();  // update caret position string
+    updateCaretPosition();  // update caret position text
 }
+
+// handler function to finish loading file
+let afterUpload = displayFile;
 
 // EVENT LISTENER: triggered by closing file picker dialog box
 // "this" is file picker control to which listener is attached
@@ -1173,20 +1227,29 @@ function uploadFile() {
         return;
     }
 
-    // update filename control
-    let filename = this.files[0].name;
-    if (filename.indexOf(".") === -1) {
-        filename += ".";  // denotes no file extension
-    }
-    document.getElementById("filename").value = filename;
+    const filePicker = this;  // save for closure below
 
     // create and initialize file reader object
     const fileReader = new FileReader();
-    fileReader.addEventListener("load", convertFile);
+    fileReader.addEventListener("load", function() {
 
-    // read selected file, which triggers convertFile()
+        // sanitize file data and convert newline characters
+        let fileData = fileReader.result
+            .replace(/</g, "&lt;")
+            .replace(/>/g, "&gt;")
+            .replace(newlineRegex, "</div><div>");
+
+        // add opening/closing <div> tags and insert <br> tags
+        fileData = "<div>" + fileData + "</div>";
+        fileData = fileData.replace(emptyLineRegex, "<div><br></div>");
+
+        // pass filename and file data to afterUpload() handler
+        afterUpload(filePicker.files[0].name, fileData);
+        filePicker.value = "";  // reset file picker control for reuse
+    });
+
+    // read selected file, triggering load listener defined above
     fileReader.readAsText(this.files[0]);
-    this.value = "";  // reset file picker control for reuse
 }
 
 // -------------------------------------
@@ -1289,7 +1352,8 @@ function initializePage() {
         <!-- hidden behind other controls -->
         <input type="file"
                id="filePicker"
-               accept="text/plain">
+               accept="text/plain"
+               disabled><!-- enabled only when needed -->
 
         <input type="button"
                value="New File"
@@ -1304,11 +1368,12 @@ function initializePage() {
                value="Save to Downloads"
                onclick="downloadFile()">
 
-        <label for="filename">Current File:</label>
-        <input type="text"
-               id="filename">
+        <div id="currentFile">
+            <label for="filename">Current File:</label>
+            <input id="filename" type="text">
+        </div>
 
-        <span id="caretPosition"></span>
+        <div id="caretPosition"></div>
 
     </div><!-- end of toolbar -->
 
