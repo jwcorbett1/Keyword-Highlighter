@@ -1019,7 +1019,7 @@ function buildCaretString(editbox) {
     let node   = editbox.firstChild;
     while (node !== null) {
 
-        // account for previous nodes not inside <div> tags
+        // account for previous node not inside <div> tags
         if (node.nodeName                 === "DIV" &&
             node.previousSibling          !== null  &&
             node.previousSibling.nodeName !== "DIV") {
@@ -1270,9 +1270,9 @@ function initializePage() {
         .addEventListener("change", uploadFile);
 
     const editbox = document.getElementById("editbox");
-    editbox.addEventListener("input",   updateEditbox);
-    editbox.addEventListener("click",   updateCaretPosition);
-    editbox.addEventListener("keydown", updateCaretPosition);
+    editbox.addEventListener("input", updateEditbox);
+    editbox.addEventListener("click", updateCaretPosition);
+    editbox.addEventListener("keyup", updateCaretPosition);
 
     clearEditbox();  // same as clicking "New File" button
 }
