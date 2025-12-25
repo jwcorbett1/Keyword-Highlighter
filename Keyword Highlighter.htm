@@ -19,7 +19,7 @@ body, input {
 /* top-level flexbox */
 #container {
     display:        flex;
-    flex-direction: column;      /* toolbar above editbox */
+    flex-direction: column;      /* toolbar over editbox */
     width:          85vw;
     height:         85vh;
     margin:         1.5em auto;  /* center horizontally */
@@ -30,7 +30,7 @@ body, input {
     flex-grow:   1;          /* fill majority of flexbox */
     white-space: preserve nowrap;
     overflow:    auto;       /* add scrollbars if/when needed */
-    margin:      0.4em 0 0;  /* add space below toolbar */
+    margin:      0.4em 0 0;  /* add space between toolbar and editbox */
     padding:     0.6em 0.8em;
     border:      0.1em solid black;
     outline:     none;
@@ -39,16 +39,7 @@ body, input {
 /* container for interface controls */
 #toolbar {
     flex-grow: 0;         /* minimize footprint */
-    position:  relative;  /* to position file picker */
-}
-
-#currentFile, #caretPosition {
-    display: inline-block;  /* treat these divs as line elements */
-}
-
-/* add space between interface controls when arranged vertically */
-input, #caretPosition {
-    margin: 0 0 0.4em;
+    position:  relative;  /* needed to position file picker */
 }
 
 /* hidden behind other controls */
@@ -61,6 +52,15 @@ input, #caretPosition {
 #filename {
     width:   40em;
     outline: none;
+}
+
+#currentFile, #caretPosition {
+    display: inline-block;  /* put on same line as other elements */
+}
+
+/* add space between interface controls when arranged vertically */
+input, #caretPosition {
+    margin: 0 0 0.4em;
 }
 
 /* -------------------------------------------------------------------------- */
@@ -149,6 +149,7 @@ const otherKeywords = [
 // -----------------------------------------------------------------------------
 // regular expressions
 
+const newline   = "</div><div>";
 const emptyLine = "<div><br></div>";
 
 const emptyLineRegex = /<div><\/div>/g;   // lines missing <br> tag
@@ -261,10 +262,13 @@ const callbackRegex = createPatternRegex(
 
 // current text to be styled
 // modified at various points to simplify regex matching
-let text      = "";
-let allowance = 0;  // total length of context files (see below)
+let text = "";
 
-// specific region of current text
+// total length of context files prepended to text (see below)
+let allowance = 0;
+
+// one specific region of current text
+// stop index goes one past end of string
 class Scope {
 
     constructor(start = 0, stop = 0) {
@@ -289,36 +293,39 @@ class Style extends Scope {
 
     constructor(style, start, stop) {
         super(start, stop);
-        this.style = style;  // used to create <span> tag
+        this.style = style;  // used in <span> tag
     }
 }
 
-// contents of separate file(s) to also scan during styling
+// contents of separate file to also scan during styling
 // used to load header files and import macros, typedefs, etc.
 class Context {
 
-    constructor(filename, fileData = "") {
+    constructor(filename) {
         this.filename = filename;
-        this.fileData = fileData;
+        this.fileData = "";  // always loaded after creation
     }
 }
 
 const contexts = [];           // array of Context objects
 const styles   = [];           // array of Style objects
-const scope    = new Scope();  // indices of current local scope
+const local    = new Scope();  // indices of current local scope
 const search   = new Scope();  // indices of current search scope
 
 // -------------------------------------
 
+// find matching Context object, or create if it doesn't exist yet
 function getContext(filename) {
 
     let context = contexts.find(function(c) {
         return c.filename === filename; });
 
+    // return if found
     if (context !== undefined) {
         return context;
     } else {
 
+        // create, save reference to array, then return
         context = new Context(filename);
         contexts.push(context);
         return context;
@@ -332,26 +339,26 @@ function initializeGlobals(html) {
     let context = "";
     for (let i = 0; i < contexts.length; i++) {
 
-        // add empty line between files
+        // add empty line between files for safety
         context += contexts[i].fileData + emptyLine;
     }
 
     // remove styling and normalize tag structure
     const unstyled = html
         .replace(stylingRegex,   "")
-        .replace(newlineRegex,   "</div><div>")
+        .replace(newlineRegex,   newline)
         .replace(emptyLineRegex, emptyLine);
 
     // combine context files and unstyled text
     text      = context + unstyled;
-    allowance = context.length;  // remember total length of context
+    allowance = context.length;  // remember total length of files
 
     // zero out other global variables
     styles.length = 0;  // discard previous Style objects
-    scope.clear();
+    local.clear();
     search.clear();
 
-    return unstyled;  // return for applyStyles() to use later
+    return unstyled;  // returned for applyStyles() to use later
 }
 
 // is region outside of any existing Style object?
@@ -378,8 +385,8 @@ function addStyle(style, start, stop) {
     styles.push(new Style(style, start - allowance, stop - allowance));
 }
 
-// build finished text based on current styling
-// needs text without modifications returned by initializeGlobals()
+// build finished text based on current Style objects
+// needs text without modifications from initializeGlobals()
 function applyStyles(unstyled) {
 
     if (styles.length === 0) {
@@ -392,13 +399,13 @@ function applyStyles(unstyled) {
         return a.start - b.start; });  // sort by starting index
 
     // remove any styles with indices before start of file
-    // they were generated for context files not displayed
+    // they were generated from context files and shouldn't display
     while (styles.length > 0 && styles[0].start < 0) {
 
         styles.shift();  // drop first Style object from array
     }
 
-    let html = mid(0, styles[0].start);  // text before first Style
+    let html = mid(0, styles[0].start);  // get text before first Style
     for (let i = 0; i < styles.length; i++) {
 
         // wrap target text with <span> tag
@@ -406,11 +413,11 @@ function applyStyles(unstyled) {
                 mid(styles[i].start, styles[i].stop)     +
                 "</span>";
 
-        // copy text between current Style and next Style
+        // copy text between current Style object and next one
         if (i + 1 < styles.length) {
             html += mid(styles[i].stop, styles[i + 1].start);
         } else {
-            html += mid(styles[i].stop);  // text after last Style
+            html += mid(styles[i].stop);  // get text after last Style
         }
     }
 
@@ -418,7 +425,7 @@ function applyStyles(unstyled) {
 }
 
 // -----------------------------------------------------------------------------
-// style entire regex match
+// style entire regex matches
 
 // action functions are passed as arguments to filter functions
 // filter functions execute regex and call action for each match found
@@ -505,7 +512,7 @@ function quickStyle(style, tokens) {
 }
 
 // -----------------------------------------------------------------------------
-// style first capture group
+// only style first capture group
 
 // ACTION: try to style first capture group and report success/failure
 function addGroup(style, match) {
@@ -517,7 +524,7 @@ function addGroup(style, match) {
     const start = match.index + match[0].indexOf(token);
     const stop  = start + token.length;
 
-    return addMatch(style, start, stop);  // try to style
+    return addMatch(style, start, stop);  // try to add style
 }
 
 // search for #undef declaration matching given token
@@ -576,6 +583,7 @@ function addFunction(style, match) {
 }
 
 // FILTER: apply style using given action for each regex match
+//     note that search scope is ignored
 function styleGroups(style, action, regex) {
 
     for (let match = regex.exec(text);
@@ -632,7 +640,7 @@ function addToken(match, tokens) {
 // extract valid identifier tokens within current search region
 function findTokens(regex) {
 
-    // collect tokens in local array
+    // collect tokens in local array - returned when done
     const tokens = [];
     let   canAdd = true;  // add next token?
 
@@ -647,9 +655,11 @@ function findTokens(regex) {
             break;  // respect search scope
         }
 
+        // switch on captured symbol character
         switch (match[2]) {  // match[2] is symbol after token
 
             // regex parameter limits which of these cases get used
+            // if it's not captured by regex, it's ignored
 
             // skip any text inside braces
             case "{":
@@ -657,7 +667,7 @@ function findTokens(regex) {
                 break;
 
             // add token in front of brackets
-            // but skip any text inside brackets
+            // then skip any text inside brackets
             case "[":
                 if (canAdd === true) {        // first match only
                     addToken(match, tokens);  // add identifier token
@@ -688,9 +698,9 @@ function findTokens(regex) {
                 break;
 
             // add token in front of declaration terminator
-            case ";":  // for variables and typedefs
-            case ")":  // for parameters
-            case "}":  // for enumerations
+            case ";":  // terminator for variables and typedefs
+            case ")":  // terminator for parameters
+            case "}":  // terminator for enumeration constants
                 if (canAdd === true) {        // first match only
                     addToken(match, tokens);  // add identifier token
                 }
@@ -728,7 +738,7 @@ function styleTokens(style, match, regex) {
     const tokens = findTokens(regex);
 
     // apply style through end of current scope
-    search.stop = scope.stop;
+    search.stop = local.stop;
     quickStyle(style, tokens.join("|"));
     search.clear();
 
@@ -736,7 +746,7 @@ function styleTokens(style, match, regex) {
 }
 
 // ACTION: find variables and typedefs and style within current scope
-// "style" parameter is array of strings
+//     note that style parameter is array of strings here
 function styleVariables(style, match, regex) {
 
     // determine if match is typedef or variable declaration
@@ -747,16 +757,17 @@ function styleVariables(style, match, regex) {
 
     } else {
 
-        // style variables and return empty string
+        // style variables, then return empty string
         styleTokens(style[0], match, regex);
         return "";  // no typedefs to return
     }
 }
 
 // FILTER: apply style using given action to each matching phrase
+//     expanding phrase regex needed for typedef handling
 function styleIdentifiers(style, action, phrase, regex, expand = false) {
 
-    phrase.lastIndex = scope.start;  // respect current scope
+    phrase.lastIndex = local.start;  // respect current scope
 
     // locate match for phrase regex within current text
     for (let match = phrase.exec(text);
@@ -764,14 +775,14 @@ function styleIdentifiers(style, action, phrase, regex, expand = false) {
              match = phrase.exec(text)) {
 
         const stop = match.index + match[0].length;
-        if (stop > scope.stop) {
+        if (stop > local.stop) {
             break;  // respect current scope
         }
 
         // apply action to matching phrase using second regex
         const tokens = action(style, match, regex);
 
-        // optionally expand phrase regex with any new typedefs found
+        // optionally, also expand phrase regex with any typedefs found
         if (expand === true && tokens !== "") {
             phrase = expandDataTypeRegex(tokens, phrase);
         }
@@ -784,6 +795,7 @@ function styleIdentifiers(style, action, phrase, regex, expand = false) {
 // style editbox
 
 // simplify struct/union definitions and function pointers
+// prevents false matches and simplifies regex definitions
 function sanitizeCurrentText() {
 
     // find structure and union definitions
@@ -804,12 +816,15 @@ function sanitizeCurrentText() {
                text.substring(stop);       // text after match
     }
 
+    // ---------------------------------
+
     // find function pointers
     for (let match = callbackRegex.exec(text);
              match !== null;
              match = callbackRegex.exec(text)) {
 
-        // get length of prefix and indices for identifier token
+        // get length of prefix and indices for function pointer name
+        // match[1] is capture group containing name
         const prefix = match[0].indexOf(match[1]);
         const start  = match.index + prefix;     // beginning of token
         const stop   = start + match[1].length;  // end of token
@@ -824,23 +839,24 @@ function sanitizeCurrentText() {
 
         // find parenthesis at end of function pointer declaration
         const closer = findCloser(callbackRegex.lastIndex, "(", ")");
+        const suffix = closer - stop;
 
         // replace function pointer prefix and suffix with spaces
-        // keep identifier token, and all text before/after pointer
+        // keep pointer name and text before/after it the same
         text = text.substring(0, match.index) +  // text before match
                " ".repeat(prefix)             +  // replace prefix
-               match[1]                       +  // keep token
-               " ".repeat(closer - stop)      +  // replace suffix
+               match[1]                       +  // keep pointer name
+               " ".repeat(suffix)             +  // replace suffix
                text.substring(closer);           // text after match
     }
 }
 
-// style function names and identifiers with local scope
+// style function names and identifiers in all local scopes
 function styleLocalScopes() {
 
     const functions    = [];             // collect function names
     let   stop         = 0;              // track end of previous scope
-    let   currentTypes = dataTypeRegex;  // track added global typedefs
+    let   currentTypes = dataTypeRegex;  // track global typedefs found
 
     // find beginning of next local scope
     for (let match = localScopeRegex.exec(text);
@@ -851,15 +867,18 @@ function styleLocalScopes() {
         if (addGroup("function", match) === false) {
 
             // if not valid, resume search at end of invalid token
+            // match[1] is capture group containing function name
             localScopeRegex.lastIndex = match.index + match[1].length;
             continue;
+
+        } else {
+            functions.push(match[1]);  // add function name to list
         }
-        functions.push(match[1]);  // add function name to list
 
         // find global typedefs between previous and current scopes
-        scope.set(stop, match.index);
+        local.set(stop, match.index);
         currentTypes = styleIdentifiers(
-            "",             // parameter ignored by findTypedefs()
+            "",             // ignored by findTypedefs() anyway
             findTypedefs,
             currentTypes,
             variableRegex,  // typedefs look like variable declarations
@@ -867,7 +886,7 @@ function styleLocalScopes() {
 
         // move scope to function's body
         stop = findCloser(localScopeRegex.lastIndex, "{", "}");
-        scope.set(localScopeRegex.lastIndex, stop - 1);
+        local.set(localScopeRegex.lastIndex, stop - 1);
 
         // style parameters and local enumerations
         styleTokens("parameter", match, parameterRegex);
@@ -875,7 +894,7 @@ function styleLocalScopes() {
             styleTokens, enumRegex, enumConstantRegex);
 
         // style local variables and local typedefs
-        // current types expanded temporarily until end of current scope
+        // current types is only expanded until end of current scope
         styleIdentifiers([ "localVariable", "typedef" ],
             styleVariables, currentTypes, variableRegex, true);
 
@@ -887,7 +906,7 @@ function styleLocalScopes() {
     quickStyle( "function", functions.join("|"));
     styleGroups("function", addFunction, functionRegex);
 
-    scope.clear();
+    local.clear();
 }
 
 // update styling for text currently entered in typing area
@@ -914,7 +933,7 @@ function styleEditbox() {
     styleGroups( "tagType", addGroup, tagTypeRegex);
 
     // style local identifiers and function names
-    sanitizeCurrentText();  // simplify certain things first
+    sanitizeCurrentText();  // simplify a few things first
     styleLocalScopes();
 
     // style global enumerations
@@ -926,7 +945,7 @@ function styleEditbox() {
         styleVariables, dataTypeRegex, variableRegex, true);
 
     // replace previous text with newly styled text
-    // maintainCaret() defined in next section below
+    // maintainCaret() is defined in next section below
     maintainCaret(editbox, applyStyles(unstyled));
 }
 
@@ -939,9 +958,9 @@ function nodeLength(node) {
     let length = node.textContent.length;
 
     // linebreaks add 1 extra character
-    if (node.nodeName             === "DIV" || (
+    if (node.nodeName             === "DIV" || (  // break after line
         node.nextSibling          !== null  &&
-        node.nextSibling.nodeName === "DIV" )) {
+        node.nextSibling.nodeName === "DIV" )) {  // break before next
 
         length++;
     }
@@ -956,7 +975,7 @@ function offsetFromRange(editbox, range) {
     let offset = range.endOffset;
 
     if (node === editbox || editbox.contains(node) === false) {
-        return 0;  // selection was outside editbox
+        return 0;  // selection not inside editbox - caret goes at top
     }
 
     // step backward through node hierarchy to find total offset
@@ -978,17 +997,17 @@ function offsetFromRange(editbox, range) {
 
 // -------------------------------------
 
-// return selection range for target location
+// return selection range for target caret location
 function buildRange(node, offset) {
 
-    // check if offset out of bounds
+    // check if offset is out of bounds
     if (offset > node.textContent.length) {
         offset = node.textContent.length;
     }
 
     const range = document.createRange();
     range.setEnd(node, offset);
-    range.collapse();  // collapse to end point set above
+    range.collapse();  // collapse to end point just set
 
     return range;
 }
@@ -1070,29 +1089,29 @@ function buildCaretString(editbox) {
         selection.type       === "None" ||
         selection.rangeCount === 0) {
 
-        return "&nbsp;";  // no position to report
+        return "";  // no position to report
     }
 
     // check if caret inside editbox
     const range = selection.getRangeAt(0);
     if (editbox.contains(range.endContainer) === false) {
 
-        return "&nbsp;";  // no position to report
+        return "";  // no position to report
     }
 
-    // step forward through node hierarchy counting lines/columns
+    // step forward through node hierarchy, counting lines/columns
     let line   = 1;
     let column = 1;
     let node   = editbox.firstChild;
     while (node !== null) {
 
-        // account for previous node not inside <div> tags
+        // account for when previous node was not inside <div> tag
         if (node.nodeName                 === "DIV" &&
             node.previousSibling          !== null  &&
             node.previousSibling.nodeName !== "DIV") {
 
             line++;
-            column = 1;  // must reset column number
+            column = 1;  // Reset column number
         }
 
         // is caret inside current node?
@@ -1111,7 +1130,7 @@ function buildCaretString(editbox) {
             if (node.nodeName === "DIV") {  // handle <div> nodes
                 line++;
                 column = 1;
-            } else {         // sum up length of other node types
+            } else {     // sum up length of all other node types
                 column += nodeLength(node);
             }
 
@@ -1129,7 +1148,7 @@ function buildCaretString(editbox) {
         }
     }
 
-    // return default value on error or empty typing area
+    // return default value on error, or when typing area is empty
     return "Ln 1, Col 1";
 }
 
@@ -1151,9 +1170,6 @@ function updateCaretPosition(event = null) {
             case "ArrowDown":
             case "ArrowLeft":
             case "ArrowRight":
-                if (event.repeat === false) {
-                    return;  // ignore singular keydown events
-                }
                 break;   // need to update displayed position
 
             default:
@@ -1180,7 +1196,7 @@ function updateEditbox() {
     updateTimer = setTimeout(styleEditbox, 2000);
 }
 
-// ask user if they want to save changes
+// ask if user wants to save changes
 function dropChanges() {
 
     return hasChanges === false ||
@@ -1194,10 +1210,10 @@ function clearEditbox() {
         return;
     }
 
-    // remove imported context files
+    // discard loaded context files
     contexts.length = 0;
 
-    // reset page controls to default values
+    // reset page elements to default values
     document.getElementById("editbox").innerHTML = "";
     document.getElementById("filename").value    = "NewFile.txt";
     hasChanges                                   = false;
@@ -1206,21 +1222,6 @@ function clearEditbox() {
 }
 
 // -------------------------------------
-
-// BUTTON ACTION: open file picker dialog box
-function selectFile(askToDrop = true) {
-
-    if (askToDrop === true && dropChanges() === false) {
-        return;
-    }
-
-    const filePicker = document.getElementById("filePicker");
-
-    // simulate user clicking on hidden file picker control
-    filePicker.disabled = false;
-    filePicker.click();
-    filePicker.disabled = true;
-}
 
 // load file data into main typing area and update filename textbox
 function displayFile(filename, fileData) {
@@ -1239,11 +1240,11 @@ function displayFile(filename, fileData) {
     updateCaretPosition();  // update caret position text
 }
 
-// handler function to finish loading file
+// handler function to use to finish loading file
 let afterUpload = displayFile;
 
 // EVENT LISTENER: triggered by closing file picker dialog box
-// "this" is file picker control to which listener is attached
+// "this" is file picker control which function is attached to
 function uploadFile() {
 
     // check if user cancelled file picker
@@ -1251,7 +1252,7 @@ function uploadFile() {
         return;
     }
 
-    const filePicker = this;  // save for closure below
+    const filePicker = this;  // save reference for closure below
 
     // create and initialize file reader object
     const fileReader = new FileReader();
@@ -1261,7 +1262,7 @@ function uploadFile() {
         let fileData = fileReader.result
             .replace(/</g, "&lt;")
             .replace(/>/g, "&gt;")
-            .replace(newlineRegex, "</div><div>");
+            .replace(newlineRegex, newline);
 
         // add opening/closing <div> tags and insert <br> tags
         fileData = "<div>" + fileData + "</div>";
@@ -1276,6 +1277,22 @@ function uploadFile() {
     fileReader.readAsText(this.files[0]);
 }
 
+// BUTTON ACTION: open file picker dialog box
+function selectFile() {
+
+    // confirm dropping changes only if opening file for editing
+    if (afterUpload === displayFile && dropChanges() === false) {
+        return;
+    }
+
+    const filePicker = document.getElementById("filePicker");
+
+    // simulate user clicking on hidden file picker control
+    filePicker.disabled = false;  // starts disabled
+    filePicker.click();
+    filePicker.disabled = true;
+}
+
 // -------------------------------------
 
 // load file data into Context object with matching filename
@@ -1283,18 +1300,19 @@ function saveContext(filename, fileData) {
 
     // creates Context object if no such object exists yet
     const context    = getContext(filename);
-    context.fileData = fileData;
+    context.fileData = fileData;  // save file data for later
 
     afterUpload = displayFile;  // swap after upload handler back
-    styleEditbox();             // style text using new context
+    styleEditbox();             // re-style text using new context
 }
 
 // BUTTON ACTION: import context into current file's namespace
 function importContext() {
 
-    // swap after upload handler, then trigger file picker dialog
+    // swap after upload handler, then trigger file picker dialog box
+    // recycles all other parts of loading files
     afterUpload = saveContext;
-    selectFile(false);  // not overwriting current file
+    selectFile();
 }
 
 // -------------------------------------
@@ -1316,14 +1334,14 @@ function downloadFile() {
 
     // determine extension
     if (filenameParts.length === 1) {
-        filename += ".txt";    // use default extension
+        filename += ".txt";  // use default extension
     }
     else if (filenameParts[1] !== "") {
         filename += "." + filenameParts[1];  // keep extension
     }
     else {
         // original filename ended with period, so no extension
-        // switch to file type with no default extension
+        // switch to a file type with no default extension
         fileType = "application/octet-stream";
     }
 
@@ -1361,6 +1379,7 @@ function exitPage(event) {
 
     if (hasChanges === true) {
 
+        // check which method current browser supports
         if (typeof event.preventDefault === "function") {
             event.preventDefault();         // for newer browsers
         } else {
