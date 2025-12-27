@@ -6,6 +6,10 @@
     <meta name="viewport"
           content="width=device-width, initial-scale=1.0">
 
+    <!-- supports dark mode -->
+    <meta name="color-scheme"
+          content="light dark">
+
     <title>Keyword Highlighter</title>
 
     <style>
@@ -17,7 +21,7 @@ body, input {
 }
 
 /* top-level flexbox */
-#container {
+#layout {
     display:        flex;
     flex-direction: column;      /* toolbar over editbox */
     width:          85vw;
@@ -25,21 +29,38 @@ body, input {
     margin:         1.5em auto;  /* center horizontally */
 }
 
+/* container for editbox and notifications */
+#container {
+    flex-grow: 1;          /* fill majority of top-level flexbox */
+    display:   flex;       /* is second-level flexbox */
+    margin:    0.4em 0 0;  /* add space between toolbar and editbox */
+    position:  relative;
+}
+
 /* typing area */
 #editbox {
-    flex-grow:   1;          /* fill majority of flexbox */
-    white-space: preserve nowrap;
-    overflow:    auto;       /* add scrollbars if/when needed */
-    margin:      0.4em 0 0;  /* add space between toolbar and editbox */
+    flex-grow:   1;     /* entirely fill second-level flexbox */
     padding:     0.6em 0.8em;
-    border:      0.1em solid black;
+    white-space: preserve nowrap;
+    overflow:    auto;  /* add scrollbars if/when needed */
+    border:      0.1em solid;
     outline:     none;
+}
+
+/* notification messages */
+.notification {
+    position: absolute;
+    z-index:  1;
+    top:      0.7em;
+    right:    0.8em;
+    padding:  1.5em 2.5em;
+    border:   0.05em solid;
 }
 
 /* container for interface controls */
 #toolbar {
     flex-grow: 0;         /* minimize footprint */
-    position:  relative;  /* needed to position file picker */
+    position:  relative;
 }
 
 /* hidden behind other controls */
@@ -54,7 +75,7 @@ body, input {
     outline: none;
 }
 
-#currentFile, #caretPosition {
+#caretPosition {
     display: inline-block;  /* put on same line as other elements */
 }
 
@@ -64,9 +85,29 @@ input, #caretPosition {
 }
 
 /* -------------------------------------------------------------------------- */
-/* colors for keywords, literals, variables, etc. */
+/* colors for page elements and highlighted text */
 
-#editbox { background-color: #F9F9F9; }  /* off white */
+/* for light mode */
+#editbox {
+    color:            black;
+    background-color: #F9F9F9;  /* off white */
+    border-color:     black;
+}
+
+/* for dark mode */
+@media(prefers-color-scheme: dark) {
+#editbox {
+    color:            white;
+    background-color: silver;
+    border-color:     #6B6B6B;  /* gray */
+} }
+
+/* notifications are always the same */
+.notification {
+    color:            black;
+    background-color: #FFBBBB;  /* pink */
+    border-color:     black;
+}
 
 .keyword        { color: #1010FF; }  /* blue   */
 .literal        { color: #D00000; }  /* red    */
@@ -169,7 +210,10 @@ const numberRegex  = /(?<![A-Za-z_])-?\.?\b\d[A-Za-z\d.-]*/g;
 const stringRegex =
     /(?:L|U|u|u8)?(['"]).*?(?<!\\<\/div>|.{6}\\)(?:\1|<div>)/g;
 
-const includeFileRegex  = /#\s*include\s+(&lt;.*?(?:&gt;|<\/?div>))/g;
+// match either type of include files
+const systemFileRegex  = /#\s*include\s+(&lt;.*?(?:&gt;|<\/?div>))/g;
+const projectFileRegex = /#\s*include\s+(".*?(?:"|<\/?div>))/g;
+
 const macroRegex        = /#\s*define\s+([A-Za-z_]\w*)/g;
 const preprocessorRegex = new RegExp(
     "#\\s*(?:" + preprocessorDirectives.join("|") + ")\\b", "g");
@@ -218,7 +262,7 @@ function createPatternRegex(patterns) {
 }
 
 // pattern for capturing identifier tokens
-const identifierToken = "\\b([A-Za-z_]\\w*)";
+const identifierToken = "(\\b[A-Za-z_]\\w*)";
 
 // PATTERN: enum/struct/union followed by identifier
 const tagTypeRegex = createPatternRegex(
@@ -264,9 +308,6 @@ const callbackRegex = createPatternRegex(
 // modified at various points to simplify regex matching
 let text = "";
 
-// total length of context files prepended to text (see below)
-let allowance = 0;
-
 // one specific region of current text
 // stop index goes one past end of string
 class Scope {
@@ -297,6 +338,12 @@ class Style extends Scope {
     }
 }
 
+const styles = [];           // array of Style objects
+const local  = new Scope();  // indices of current local scope
+const search = new Scope();  // indices of current search scope
+
+// -------------------------------------
+
 // contents of separate file to also scan during styling
 // used to load header files and import macros, typedefs, etc.
 class Context {
@@ -307,14 +354,9 @@ class Context {
     }
 }
 
-const contexts = [];           // array of Context objects
-const styles   = [];           // array of Style objects
-const local    = new Scope();  // indices of current local scope
-const search   = new Scope();  // indices of current search scope
+const contexts = [];  // array of Context objects
 
-// -------------------------------------
-
-// find matching Context object, or create if it doesn't exist yet
+// find matching Context object, or create if not found
 function getContext(filename) {
 
     let context = contexts.find(function(c) {
@@ -325,15 +367,40 @@ function getContext(filename) {
         return context;
     } else {
 
-        // create, save reference to array, then return
+        // create, save reference in array, then return
         context = new Context(filename);
         contexts.push(context);
         return context;
     }
 }
 
+// scan through text and locate include files
+// needs text without modifications from initializeGlobals() - see below
+function findContext(unstyled, regex) {
+
+    for (let match = regex.exec(unstyled);
+             match !== null;
+             match = regex.exec(unstyled)) {
+
+        // remove linebreaks and whitespace, then add to array
+        // match[1] is capture group containing filename
+        getContext(match[1].replace(linebreakRegex, "").trim());
+    }
+}
+
+// -------------------------------------
+
+// total length of context files prepended to text
+let allowance = 0;
+
 // prepare for next styling pass
 function initializeGlobals(html) {
+
+    // remove styling and normalize tag structure
+    const unstyled = html
+        .replace(stylingRegex,   "")
+        .replace(newlineRegex,   newline)
+        .replace(emptyLineRegex, emptyLine);
 
     // merge all context files together
     let context = "";
@@ -342,12 +409,6 @@ function initializeGlobals(html) {
         // add empty line between files for safety
         context += contexts[i].fileData + emptyLine;
     }
-
-    // remove styling and normalize tag structure
-    const unstyled = html
-        .replace(stylingRegex,   "")
-        .replace(newlineRegex,   newline)
-        .replace(emptyLineRegex, emptyLine);
 
     // combine context files and unstyled text
     text      = context + unstyled;
@@ -358,7 +419,7 @@ function initializeGlobals(html) {
     local.clear();
     search.clear();
 
-    return unstyled;  // returned for applyStyles() to use later
+    return unstyled;  // needed by applyStyles() and findContext()
 }
 
 // is region outside of any existing Style object?
@@ -559,7 +620,7 @@ function addMacro(style, match) {
     }
 
     // limit next search to macro's valid scope
-    // match[1] is capture group with macro token
+    // match[1] is capture group containing macro token
     const start = match.index + match[0].length;
     search.set(
         start,
@@ -578,7 +639,7 @@ function addFunction(style, match) {
         return;  // function name not valid - text already styled
     }
 
-    // match[1] is capture group with function name
+    // match[1] is capture group containing function name
     quickStyle(style, match[1]);
 }
 
@@ -824,7 +885,7 @@ function sanitizeCurrentText() {
              match = callbackRegex.exec(text)) {
 
         // get length of prefix and indices for function pointer name
-        // match[1] is capture group containing name
+        // match[1] is capture group containing pointer name
         const prefix = match[0].indexOf(match[1]);
         const start  = match.index + prefix;     // beginning of token
         const stop   = start + match[1].length;  // end of token
@@ -916,12 +977,16 @@ function styleEditbox() {
     const editbox  = document.getElementById("editbox");
     const unstyled = initializeGlobals(editbox.innerHTML);
 
+    // scan through text and remember any include files for later
+    findContext(unstyled, systemFileRegex);
+    findContext(unstyled, projectFileRegex);
+
     // style comments and hide from future searches
     styleMatches("comment", hideMatch, commentRegex);
 
-    // style string and numeric literals
+    // style string and numeric literals, including #include files
     styleMatches("literal", splitMatch, stringRegex);
-    styleGroups( "literal", addGroup,   includeFileRegex);
+    styleGroups( "literal", addGroup,   systemFileRegex);
     styleMatches("literal", addMatch,   numberRegex);
 
     // style preprocessor directives, including macros
@@ -1410,50 +1475,51 @@ function initializePage() {
 
 </head>
 <body onload="initializePage()">
-<div id="container">
-
+<div id="layout">
     <div id="toolbar">
 
-        <div id="currentFile">
+        <div><!-- group textbox and its label at top -->
             <label for="filename">Current File:</label>
             <input id="filename" type="text">
         </div>
 
-        <div id="controlButtons">
+        <!-- hidden behind other controls -->
+        <input type="file"
+               id="filePicker"
+               accept="text/plain"
+               disabled><!-- enabled only when needed -->
 
-            <!-- hidden behind other controls -->
-            <input type="file"
-                   id="filePicker"
-                   accept="text/plain"
-                   disabled><!-- enabled only when needed -->
+        <input type="button"
+               value="New File"
+               onclick="clearEditbox()">
 
-            <input type="button"
-                   value="New File"
-                   onclick="clearEditbox()">
+        <!-- triggers above file picker control -->
+        <input type="button"
+               value="Open File"
+               onclick="selectFile()">
 
-            <!-- triggers above file picker control -->
-            <input type="button"
-                   value="Open File"
-                   onclick="selectFile()">
+        <input type="button"
+               value="Save to Downloads"
+               onclick="downloadFile()">
 
-            <input type="button"
-                   value="Save to Downloads"
-                   onclick="downloadFile()">
+        <input type="button"
+               value="Import Context"
+               onclick="importContext()">
 
-            <input type="button"
-                   value="Import Context"
-                   onclick="importContext()">
-
-            <div id="caretPosition"></div>
-
-        </div><!-- end of controlButtons -->
+        <div id="caretPosition"></div>
 
     </div><!-- end of toolbar -->
+    <div id="container">
 
-    <div id="editbox"
-         contenteditable="true"
-         spellcheck="false"></div>
+        <div class="notification">Testing</div>
 
-</div><!-- end of container -->
+        <!-- notifications inserted here -->
+
+        <div id="editbox"
+             contenteditable="true"
+             spellcheck="false"></div>
+
+    </div><!-- end of container -->
+</div><!-- end of layout -->
 </body>
 </html>
