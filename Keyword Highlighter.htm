@@ -5,10 +5,8 @@
     <meta charset="UTF-8">
     <meta name="viewport"
           content="width=device-width, initial-scale=1.0">
-
-    <!-- supports dark mode -->
     <meta name="color-scheme"
-          content="light dark">
+          content="light dark"><!-- supports dark mode -->
 
     <title>Keyword Highlighter</title>
 
@@ -25,64 +23,84 @@ body, input {
     display:        flex;
     flex-direction: column;      /* toolbar over editbox */
     width:          85vw;
-    height:         85vh;
-    margin:         1.5em auto;  /* center horizontally */
+    height:         90vh;
+    margin:         1.4em auto;  /* center horizontally */
 }
 
-/* container for editbox and notifications */
-#container {
-    flex-grow: 1;          /* fill majority of top-level flexbox */
-    display:   flex;       /* is second-level flexbox */
-    margin:    0.4em 0 0;  /* add space between toolbar and editbox */
-    position:  relative;
+/* shows caret position at bottom of page */
+#caretPosition {
+    flex-grow: 0;
+    padding:   0.1em 0 1.1em 0.3em;
 }
 
-/* typing area */
-#editbox {
-    flex-grow:   1;     /* entirely fill second-level flexbox */
-    padding:     0.6em 0.8em;
-    white-space: preserve nowrap;
-    overflow:    auto;  /* add scrollbars if/when needed */
-    border:      0.1em solid;
-    outline:     none;
-}
-
-/* notification messages */
-.notification {
-    position: absolute;
-    z-index:  1;
-    top:      0.7em;
-    right:    0.8em;
-    padding:  1.5em 2.5em;
-    border:   0.05em solid;
-}
+/* ---------------------------------- */
 
 /* container for interface controls */
 #toolbar {
     flex-grow: 0;         /* minimize footprint */
-    position:  relative;
+    position:  relative;  /* needed to position file picker */
 }
 
 /* hidden behind other controls */
+/* also starts disabled (see HTML at end of file) */
 #filePicker {
     position: absolute;
     z-index:  -1;
     opacity:  0;  /* also invisible */
 }
 
+/* size filename textbox */
 #filename {
     width:   40em;
     outline: none;
 }
 
-#caretPosition {
-    display: inline-block;  /* put on same line as other elements */
+/* add space between interface controls when arranged vertically */
+input {
+    margin: 0.2em 0;
 }
 
-/* add space between interface controls when arranged vertically */
-input, #caretPosition {
-    margin: 0 0 0.4em;
+/* ---------------------------------- */
+
+/* second-level flexbox for typing area and notifications */
+#container {
+    flex-grow:      1;            /* fill most of top-level flexbox */
+    display:        flex;
+    flex-direction: column;
+    margin:         0.6em 0 0;    /* add space below toolbar */
+    border:         0.1em solid;  /* border color set later */
+    z-index:        2;            /* on top of notification messages */
+    position:       relative;     /* needed to position notifications */
+    overflow:       hidden;       /* clip notifications to container */
 }
+
+/* typing area */
+#editbox {
+    flex-grow:   1;            /* entirely fill second-level flexbox */
+    padding:     0.6em 0.8em;
+    white-space: preserve nowrap;
+    overflow:    auto;         /* add scrollbars if/when needed */
+    outline:     none;
+}
+
+/* missing context message */
+.notification {
+    position: absolute;
+    z-index:  1;             /* on top of editbox */
+    top:      0.7em;         /* in upper right corner */
+    right:    1.2em;
+    padding:  1em 2em 0;
+    border:   0.05em solid;  /* border color set later */
+}
+
+/* indent text */
+.indent {
+    margin:  0 0 0 2em;
+}
+
+/* general positioning */
+.floatLeft  { float: left;  }
+.floatRight { float: right; }
 
 /* -------------------------------------------------------------------------- */
 /* colors for page elements and highlighted text */
@@ -102,13 +120,14 @@ input, #caretPosition {
     border-color:     #6B6B6B;  /* gray */
 } }
 
-/* notifications are always the same */
+/* notifications are always the same colors */
 .notification {
     color:            black;
     background-color: #FFBBBB;  /* pink */
     border-color:     black;
 }
 
+/* text highlight colors */
 .keyword        { color: #1010FF; }  /* blue   */
 .literal        { color: #D00000; }  /* red    */
 .localVariable  { color: #E717E7; }  /* pink   */
@@ -302,7 +321,7 @@ const callbackRegex = createPatternRegex(
     [ "\\([^*)]*\\*", identifierToken, "\\)", "\\(" ]);
 
 // -----------------------------------------------------------------------------
-// global data
+// global data management
 
 // current text to be styled
 // modified at various points to simplify regex matching
@@ -338,55 +357,34 @@ class Style extends Scope {
     }
 }
 
-const styles = [];           // array of Style objects
-const local  = new Scope();  // indices of current local scope
-const search = new Scope();  // indices of current search scope
-
-// -------------------------------------
-
 // contents of separate file to also scan during styling
 // used to load header files and import macros, typedefs, etc.
 class Context {
 
     constructor(filename) {
-        this.filename = filename;
-        this.fileData = "";  // always loaded after creation
+        this.filename     = filename;
+        this.fileData     = "";    // always loaded after creation
+        this.systemFile   = false;
+        this.notification = null;  // reference to popup message
+    }
+
+    getFilename() {
+
+        let filename = this.filename;
+        if (this.systemFile === true) {
+            filename = "&lt;" + filename + "&gt;";
+        } else {
+            filename = "\"" + filename + "\"";
+        }
+
+        return filename;
     }
 }
 
-const contexts = [];  // array of Context objects
-
-// find matching Context object, or create if not found
-function getContext(filename) {
-
-    let context = contexts.find(function(c) {
-        return c.filename === filename; });
-
-    // return if found
-    if (context !== undefined) {
-        return context;
-    } else {
-
-        // create, save reference in array, then return
-        context = new Context(filename);
-        contexts.push(context);
-        return context;
-    }
-}
-
-// scan through text and locate include files
-// needs text without modifications from initializeGlobals() - see below
-function findContext(unstyled, regex) {
-
-    for (let match = regex.exec(unstyled);
-             match !== null;
-             match = regex.exec(unstyled)) {
-
-        // remove linebreaks and whitespace, then add to array
-        // match[1] is capture group containing filename
-        getContext(match[1].replace(linebreakRegex, "").trim());
-    }
-}
+const contexts = [];           // array of Context objects
+const styles   = [];           // array of Style objects
+const local    = new Scope();  // indices of current local scope
+const search   = new Scope();  // indices of current search scope
 
 // -------------------------------------
 
@@ -414,12 +412,16 @@ function initializeGlobals(html) {
     text      = context + unstyled;
     allowance = context.length;  // remember total length of files
 
+    // scan combined text for any #include files without context data
+    // createNotifications() defined in "manage notifications" section
+    createNotifications(text);
+
     // zero out other global variables
     styles.length = 0;  // discard previous Style objects
     local.clear();
     search.clear();
 
-    return unstyled;  // needed by applyStyles() and findContext()
+    return unstyled;  // needed by applyStyles()
 }
 
 // is region outside of any existing Style object?
@@ -447,24 +449,25 @@ function addStyle(style, start, stop) {
 }
 
 // build finished text based on current Style objects
-// needs text without modifications from initializeGlobals()
+// needs text without modifications returned by initializeGlobals()
 function applyStyles(unstyled) {
 
-    if (styles.length === 0) {
-        return unstyled;  // no styles to apply
-    }
-
-    // create shorter name for String.substring() calls
-    const mid = unstyled.substring.bind(unstyled);
     styles.sort(function(a, b) {
         return a.start - b.start; });  // sort by starting index
 
     // remove any styles with indices before start of file
-    // they were generated from context files and shouldn't display
+    // they were generated from context files and don't display
     while (styles.length > 0 && styles[0].start < 0) {
 
         styles.shift();  // drop first Style object from array
     }
+
+    if (styles.length === 0) {
+        return unstyled;  // no styles (left) to apply
+    }
+
+    // create shorter name for String.substring() calls
+    const mid = unstyled.substring.bind(unstyled);
 
     let html = mid(0, styles[0].start);  // get text before first Style
     for (let i = 0; i < styles.length; i++) {
@@ -551,7 +554,7 @@ function styleMatches(style, action, regex) {
              match !== null;
              match = regex.exec(text)) {
 
-        const stop  = match.index + match[0].length;
+        const stop = match.index + match[0].length;
         if (stop > search.stop) {
             break;  // respect search scope
         }
@@ -644,7 +647,7 @@ function addFunction(style, match) {
 }
 
 // FILTER: apply style using given action for each regex match
-//     note that search scope is ignored
+//     note that search scope is ignored by this filter
 function styleGroups(style, action, regex) {
 
     for (let match = regex.exec(text);
@@ -977,10 +980,6 @@ function styleEditbox() {
     const editbox  = document.getElementById("editbox");
     const unstyled = initializeGlobals(editbox.innerHTML);
 
-    // scan through text and remember any include files for later
-    findContext(unstyled, systemFileRegex);
-    findContext(unstyled, projectFileRegex);
-
     // style comments and hide from future searches
     styleMatches("comment", hideMatch, commentRegex);
 
@@ -1010,7 +1009,7 @@ function styleEditbox() {
         styleVariables, dataTypeRegex, variableRegex, true);
 
     // replace previous text with newly styled text
-    // maintainCaret() is defined in next section below
+    // maintainCaret() defined in next section below
     maintainCaret(editbox, applyStyles(unstyled));
 }
 
@@ -1143,10 +1142,168 @@ function maintainCaret(editbox, html) {
     selection.addRange(rangeFromOffset(editbox, offset));
 }
 
-// -------------------------------------
+// -----------------------------------------------------------------------------
+// manage notifications
 
-// convert caret position to line/column numbers and display
-function buildCaretString(editbox) {
+// find matching Context object, or create it if not found
+function getContext(filename) {
+
+    // remove extraneous characters and HTML entities
+    filename = filename
+        .replace(/<|&lt;/g,   "")
+        .replace(/>|&gt;/g,   "")
+        .replace(/"|&quot;/g, "");
+
+    // look for existing Context object
+    let context = contexts.find(function(c) {
+        return c.filename === filename; });
+
+    // create object if not found
+    if (context === undefined) {
+
+        context = new Context(filename);
+        contexts.push(context);  // save reference in global array
+    }
+
+    return context;
+}
+
+// scan through all input for #include files matching regex
+// using getContext() prevents duplicate entries for same filename
+function findContext(allInput, regex) {
+
+    for (let match = regex.exec(allInput);
+             match !== null;
+             match = regex.exec(allInput)) {
+
+        // remove linebreaks and whitespace
+        // match[1] is capture group containing filename
+        const filename = match[1]
+            .replace(linebreakRegex, "")
+            .trim();
+
+        const context = getContext(filename);  // get or create
+
+        // remember if filename was surrounded by angle brackets
+        context.systemFile = (filename.indexOf("&lt;") !== -1);
+    }
+}
+
+// cascade notifications down right side of typing area
+function positionNotifications() {
+
+    let offset = 0;  // total offset from first notification
+
+    // loop through all contexts with notifications
+    for (let i = 0; i < contexts.length; i++) {
+        if (contexts[i].notification !== null) {
+
+            // if notification at top of stack, don't offset
+            if (offset === 0) {
+                contexts[i].notification.style.transform = "";
+            }
+
+            // otherwise, position below previous notification
+            else {
+                contexts[i].notification.style.transform =
+                    "translateY(" + offset + "em)";
+            }
+
+            offset += 7;  // increase next offset to use
+        }
+    }
+}
+
+const dismissed = " ";  // mark as notification dismissed
+
+// remove previously shown notification for missing context data
+function dismissNotification(filename, rescan = false) {
+
+    const context = getContext(filename);
+
+    // if present, remove notification from page
+    if (context.notification !== null) {
+
+        const container = document.getElementById("container");
+        container.removeChild(context.notification);
+        context.notification = null;  // also remove from object
+    }
+
+    // if context still missing, mark notification as dismissed
+    if (rescan === false && context.fileData === "") {
+        context.fileData = dismissed;  // technically not empty
+    }
+
+    // reposition remaining notifications
+    positionNotifications();
+}
+
+// create notifications for #include files with missing context data
+function createNotifications(allInput) {
+
+    const container = document.getElementById("container");
+
+    // find any new #include files
+    findContext(allInput, systemFileRegex);
+    findContext(allInput, projectFileRegex);
+
+    // loop through all context entries
+    for (let i = 0; i < contexts.length; i++) {
+
+        // clear previous notification
+        dismissNotification(contexts[i].filename, true);  // allow rescan
+
+        // if context is missing file data, create notification
+        if (contexts[i].fileData === "") {
+
+            // create notification message
+            let message = "Import header file?<br>";
+
+            // add filename of missing file
+            message += "<span class='indent'>"   +
+                       contexts[i].getFilename() +
+                       "</span>";
+
+            // add blank line before buttons
+            message += "<br><br>";
+
+            // add button to import missing file
+            message += "<input type='button' "     +
+                              "value='Import' "    +
+                              "class='floatLeft' " +
+                              "onclick='importContext()'>";
+
+            // add button to dismiss notification
+            message += "<input type='button' "      +
+                              "value='Dismiss' "    +
+                              "class='floatRight' " +
+                              "onclick='dismissNotification(\"" +
+                                  contexts[i].filename + "\")'>";
+
+            // create notification <div> to hold message and buttons
+            const notification     = document.createElement("div");
+            notification.className = "notification";
+            notification.innerHTML = message;
+
+            // display notification and save reference for later
+            container.appendChild(notification);
+            contexts[i].notification = notification;
+        }
+    }
+
+    // position all notifications at once
+    positionNotifications();
+}
+
+// -----------------------------------------------------------------------------
+// event handlers
+
+// EVENT LISTENER: display caret position as line/column numbers
+// triggered by clicking on typing area and pressing keys
+function updateCaretPosition() {
+
+    const editbox       = document.getElementById("editbox");
+    const caretPosition = document.getElementById("caretPosition");
 
     // check if caret is active
     const selection = window.getSelection();
@@ -1154,14 +1311,16 @@ function buildCaretString(editbox) {
         selection.type       === "None" ||
         selection.rangeCount === 0) {
 
-        return "";  // no position to report
+        caretPosition.innerHTML = "&nbsp;";  // no position to display
+        return;
     }
 
     // check if caret inside editbox
     const range = selection.getRangeAt(0);
     if (editbox.contains(range.endContainer) === false) {
 
-        return "";  // no position to report
+        caretPosition.innerHTML = "&nbsp;";  // no position to display
+        return;
     }
 
     // step forward through node hierarchy, counting lines/columns
@@ -1176,14 +1335,17 @@ function buildCaretString(editbox) {
             node.previousSibling.nodeName !== "DIV") {
 
             line++;
-            column = 1;  // Reset column number
+            column = 1;  // reset column number
         }
 
         // is caret inside current node?
         if (node === range.endContainer) {
 
-            return "Ln "    +  line   +
-                   ", Col " + (column + range.endOffset);
+            // display current line and column values on toolbar
+            caretPosition.innerHTML =
+                "Ln "    +  line   +
+                ", Col " + (column + range.endOffset);
+            return;
 
         // is caret after current node?
         } else if (node.contains(range.endContainer) === false) {
@@ -1194,8 +1356,9 @@ function buildCaretString(editbox) {
 
             if (node.nodeName === "DIV") {  // handle <div> nodes
                 line++;
-                column = 1;
-            } else {     // sum up length of all other node types
+                column = 1;  // reset column number
+            }
+            else {  // sum up length of all other node types
                 column += nodeLength(node);
             }
 
@@ -1213,48 +1376,20 @@ function buildCaretString(editbox) {
         }
     }
 
-    // return default value on error, or when typing area is empty
-    return "Ln 1, Col 1";
+    // display default text if typing area is empty or error occurs
+    caretPosition.innerHTML = "Ln 1, Col 1";
+    return;
 }
 
-// -----------------------------------------------------------------------------
-// event handlers
+// -------------------------------------
 
 let hasChanges = false;  // dirty flag for typing area
+let updateTimer;         // debouncing timer
 
-// EVENT LISTENER: triggered by
-//     - clicking on typing area
-//     - pressing arrow keys
-function updateCaretPosition(event = null) {
-
-    // for key events, check which key was pressed
-    if (event !== null && "key" in event === true) {
-        switch (event.key) {
-
-            case "ArrowUp":
-            case "ArrowDown":
-            case "ArrowLeft":
-            case "ArrowRight":
-                break;   // need to update displayed position
-
-            default:
-                return;  // nothing else should affect caret
-        }
-    }
-
-    // calculate and show line/column numbers on toolbar
-    const editbox  = document.getElementById("editbox");
-    const position = buildCaretString(editbox);
-    document.getElementById("caretPosition").innerHTML = position;
-}
-
-let updateTimer;  // debouncing timer
-
-// EVENT LISTENER: triggered by user typing
+// EVENT LISTENER: triggered by all user input
 function updateEditbox() {
 
-    hasChanges = true;      // set dirty flag
-    updateCaretPosition();  // update caret position text
+    hasChanges = true;  // set dirty flag
 
     // after no typing for 2 seconds, update styling
     clearTimeout(updateTimer);
@@ -1268,6 +1403,18 @@ function dropChanges() {
            confirm("You will lose any unsaved changes.");
 }
 
+// BUTTON ACTION: discard all context previously loaded
+function discardContext() {
+
+    // clear old notifications from screen
+    for (let i = 0; i < contexts.length; i++) {
+        dismissNotification(contexts[i].filename, true);
+    }
+
+    contexts.length = 0;
+    styleEditbox();  // rescan and create notifications
+}
+
 // BUTTON ACTION: delete contents of typing area
 function clearEditbox() {
 
@@ -1275,15 +1422,13 @@ function clearEditbox() {
         return;
     }
 
-    // discard loaded context files
-    contexts.length = 0;
-
     // reset page elements to default values
     document.getElementById("editbox").innerHTML = "";
     document.getElementById("filename").value    = "NewFile.txt";
     hasChanges                                   = false;
 
-    updateCaretPosition();  // update caret position text
+    discardContext();       // clear old notifications
+    updateCaretPosition();  // reset caret position text
 }
 
 // -------------------------------------
@@ -1302,7 +1447,7 @@ function displayFile(filename, fileData) {
     hasChanges                                   = false;
 
     styleEditbox();         // style newly loaded text
-    updateCaretPosition();  // update caret position text
+    updateCaretPosition();  // reset caret position text
 }
 
 // handler function to use to finish loading file
@@ -1363,11 +1508,13 @@ function selectFile() {
 // load file data into Context object with matching filename
 function saveContext(filename, fileData) {
 
-    // creates Context object if no such object exists yet
+    // find or create Context matching object
     const context    = getContext(filename);
     context.fileData = fileData;  // save file data for later
 
-    afterUpload = displayFile;  // swap after upload handler back
+    dismissNotification(filename);
+
+    afterUpload = displayFile;  // swap "after upload" handler back
     styleEditbox();             // re-style text using new context
 }
 
@@ -1378,6 +1525,19 @@ function importContext() {
     // recycles all other parts of loading files
     afterUpload = saveContext;
     selectFile();
+}
+
+// BUTTON ACTION: restore previously dismissed notifications
+function scanForContext() {
+
+    // loop through all context objects
+    for (let i = 0; i < contexts.length; i++) {
+        if (contexts[i].fileData === dismissed) {
+            contexts[i].fileData = "";  // unflag object
+        }
+    }
+
+    styleEditbox();  // rescan and create notifications
 }
 
 // -------------------------------------
@@ -1476,17 +1636,19 @@ function initializePage() {
 </head>
 <body onload="initializePage()">
 <div id="layout">
+
     <div id="toolbar">
 
         <div><!-- group textbox and its label at top -->
             <label for="filename">Current File:</label>
-            <input id="filename" type="text">
+            <input id="filename"
+                   type="text">
         </div>
 
         <!-- hidden behind other controls -->
         <input type="file"
                id="filePicker"
-               accept="text/plain"
+               accept="text/plain,.h,.hpp"
                disabled><!-- enabled only when needed -->
 
         <input type="button"
@@ -1502,24 +1664,33 @@ function initializePage() {
                value="Save to Downloads"
                onclick="downloadFile()">
 
+        |<!-- separate buttons into groups -->
+
         <input type="button"
-               value="Import Context"
+               value="Import Header"
                onclick="importContext()">
 
-        <div id="caretPosition"></div>
+        <input type="button"
+               value="Discard Imports"
+               onclick="discardContext()">
+
+        <input type="button"
+               value="Rescan #includes"
+               onclick="scanForContext()">
 
     </div><!-- end of toolbar -->
+
+    <!-- additional container to position notifications -->
     <div id="container">
-
-        <div class="notification">Testing</div>
-
-        <!-- notifications inserted here -->
 
         <div id="editbox"
              contenteditable="true"
              spellcheck="false"></div>
 
     </div><!-- end of container -->
+
+    <div id="caretPosition"></div>
+
 </div><!-- end of layout -->
 </body>
 </html>
