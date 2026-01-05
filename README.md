@@ -16,6 +16,8 @@ Syntax elements identified and highlighted by this program include:
 * function parameters
 * function pointers
 
-Additionally, it implements identifier shadowing/masking; local variables hide global variables and are correctly colored as local variables.
+Additionally, it implements identifier shadowing/masking; local variables hide global variables and are correctly highlighted as local variables.
+
+Version 3 adds support for importing header files into the context of the currently open file.  This brings in typedefs, macros, and other elements defined in the header file and then uses that information to color-code the text currently being edited.
 
 The primary purpose of this project was to improve my understanding of regular expressions.  Rather than implementing a tokenizer/parser system, this program applies regular expressions extensively to identify language elements within the user's text.  It also works directly with raw HTML pulled directly from the main editable \<div\>, which provided some interesting challenges.
